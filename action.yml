@@ -81,7 +81,7 @@ runs:
       shell: bash
       id: deno_project
       env:
-        DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
+        DENO_DEPLOY_TOKEN: ${{ env.DENO_DEPLOY_TOKEN }}
       run: |
         deployctl projects create \
           --token=$DENO_DEPLOY_TOKEN \
@@ -114,7 +114,7 @@ runs:
     - name: Deploy to Deno
       shell: bash
       env:
-        DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
+        DENO_DEPLOY_TOKEN: ${{ env.DENO_DEPLOY_TOKEN }}
       run: |
         deployctl deploy \
           --token=$DENO_DEPLOY_TOKEN \
@@ -139,7 +139,7 @@ runs:
     - name: Commit file
       uses: swinton/commit@v2.x
       env:
-        GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+        GH_TOKEN: ${{ steps.app-token.outputs.token || env.GITHUB_TOKEN }}
       with:
         files: |
           manifest.json

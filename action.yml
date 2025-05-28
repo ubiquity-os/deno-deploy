@@ -147,8 +147,18 @@ runs:
         app-id: ${{ env.APP_ID }}
         private-key: ${{ env.APP_PRIVATE_KEY }}
 
+    - name: Check if manifest.json exists
+      id: check_manifest
+      shell: bash
+      run: |
+        if [ -f manifest.json ]; then
+          echo "exists=true" >> $GITHUB_OUTPUT
+        else
+          echo "exists=false" >> $GITHUB_OUTPUT
+        fi
+
     - name: Format manifest.json using Deno
-      if: inputs.action == 'deploy'
+      if: inputs.action == 'deploy' && steps.check_manifest.outputs.exists == 'true'
       shell: bash
       run: |
         if [ -f manifest.json ]; then
@@ -158,7 +168,7 @@ runs:
         fi
 
     - name: Commit file
-      if: inputs.action == 'deploy'
+      if: inputs.action == 'deploy' && steps.check_manifest.outputs.exists == 'true'
       uses: swinton/commit@v2.x
       env:
         GH_TOKEN: ${{ steps.app-token.outputs.token || env.GITHUB_TOKEN }}

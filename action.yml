@@ -112,6 +112,12 @@ runs:
           const path = require('path');
           
           const manifestPath = path.resolve("${{ github.workspace }}", './manifest.json');
+
+          if (!fs.existsSync(manifestPath)) {
+            console.log('manifest.json not found. Skipping update.');
+            return;
+          }
+
           const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
           
           manifest["homepage_url"] = "${{ steps.deno_project.outputs.deployment_url }}";

@@ -151,7 +151,11 @@ runs:
       if: inputs.action == 'deploy'
       shell: bash
       run: |
-        deno fmt --ext=json manifest.json
+        if [ -f manifest.json ]; then
+          deno fmt --ext=json manifest.json
+        else
+          echo "manifest.json not found. Skipping formatting."
+        fi
 
     - name: Commit file
       if: inputs.action == 'deploy'

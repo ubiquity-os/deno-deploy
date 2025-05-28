@@ -3,13 +3,12 @@ description: "Checks out the repository, creates an entry point, and publishes t
  If environment variables are set, they will get published with the deployment as well."
 inputs:
   pluginEntry:
-    description: "The path to the plugin entry file."
+    description: "The path to the plugin entry file. It is expected to export 'fetch' as a default."
     required: false
-    default: "${{ github.workspace }}/src/worker.ts"
-  commitMessage:
-    description: "The commit message."
-    required: false
-    default: "chore: [skip ci] publish to Deno"
+    default: "./worker"
+  token:
+    description: "Deno token for publishing."
+    required: true
 outputs: {}
 runs:
   using: "composite"
@@ -54,13 +53,12 @@ runs:
         deno run --allow-env --allow-write=.env generate-env.ts
         rm generate-env.ts
 
-
     - name: Create Deno Entry Point
       shell: bash
       run: |
         mkdir -p src
         cat << 'EOF' > src/deno.ts
-        import worker from "./worker";
+        import worker from "${{ inputs.pluginEntry }}";
         export default {
           async fetch(request: Request, env: Record<string, unknown>, executionCtx?: ExecutionContext) {
             Object.assign(env, Deno.env.toObject());
@@ -81,7 +79,7 @@ runs:
       shell: bash
       id: deno_project
       env:
-        DENO_DEPLOY_TOKEN: ${{ env.DENO_DEPLOY_TOKEN }}
+        DENO_DEPLOY_TOKEN: ${{ inputs.token }}
       run: |
         deployctl projects create \
           --token=$DENO_DEPLOY_TOKEN \
@@ -114,7 +112,7 @@ runs:
     - name: Deploy to Deno
       shell: bash
       env:
-        DENO_DEPLOY_TOKEN: ${{ env.DENO_DEPLOY_TOKEN }}
+        DENO_DEPLOY_TOKEN: ${{ inputs.token }}
       run: |
         deployctl deploy \
           --token=$DENO_DEPLOY_TOKEN \

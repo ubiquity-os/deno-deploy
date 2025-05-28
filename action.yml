@@ -2,6 +2,10 @@ name: "Deploy to Deno"
 description: "Checks out the repository, creates an entry point, and publishes the project to Deno.
  If environment variables are set, they will get published with the deployment as well."
 inputs:
+  action:
+    description: "Action to perform: 'deploy' or 'delete' the project."
+    required: true
+    default: "deploy"
   pluginEntry:
     description: "The path to the plugin entry file. It is expected to export 'fetch' as a default."
     required: false
@@ -14,6 +18,7 @@ runs:
   using: "composite"
   steps:
     - name: Check out the repository
+      if: inputs.action == 'deploy'
       uses: actions/checkout@v4
 
     - name: Setup Deno
@@ -35,7 +40,9 @@ runs:
         new_name=$(echo "$new_name" | cut -c 1-26)
         echo "PROJECT_NAME=$new_name" >> $GITHUB_ENV
 
+    # === DEPLOY STEPS ===
     - name: Generate .env File
+      if: inputs.action == 'deploy'
       shell: bash
       run: |
         cat > generate-env.ts <<'EOF'
@@ -54,6 +61,7 @@ runs:
         rm generate-env.ts
 
     - name: Create Deno Entry Point
+      if: inputs.action == 'deploy'
       shell: bash
       run: |
         mkdir -p src
@@ -68,6 +76,7 @@ runs:
         EOF
 
     - name: Fix Import Extensions
+      if: inputs.action == 'deploy'
       shell: bash
       run: |
         find src -name "*.ts" -type f -exec sh -c '
@@ -75,7 +84,8 @@ runs:
         ' _ {} \;
         find src -name "*.ts.bak" -delete
 
-    - name: Manage Deno Deploy Project
+    - name: Manage Deno Deploy Project (Deploy)
+      if: inputs.action == 'deploy'
       shell: bash
       id: deno_project
       env:
@@ -94,6 +104,7 @@ runs:
         echo "deployment_url=$PROJECT_URL" >> $GITHUB_OUTPUT
 
     - name: Update manifest.json with deployment URL
+      if: inputs.action == 'deploy'
       uses: actions/github-script@v7
       with:
         script: |
@@ -110,6 +121,7 @@ runs:
           console.log('Updated manifest:', updatedManifest);
 
     - name: Deploy to Deno
+      if: inputs.action == 'deploy'
       shell: bash
       env:
         DENO_DEPLOY_TOKEN: ${{ inputs.token }}
@@ -122,7 +134,7 @@ runs:
           --prod
 
     - name: Get GitHub App token
-      if: env.APP_ID != '' && env.APP_PRIVATE_KEY != ''
+      if: inputs.action == 'deploy' && env.APP_ID != '' && env.APP_PRIVATE_KEY != ''
       uses: actions/create-github-app-token@v1
       id: app-token
       with:
@@ -130,11 +142,13 @@ runs:
         private-key: ${{ env.APP_PRIVATE_KEY }}
 
     - name: Format manifest.json using Deno
+      if: inputs.action == 'deploy'
       shell: bash
       run: |
         deno fmt --ext=json manifest.json
 
     - name: Commit file
+      if: inputs.action == 'deploy'
       uses: swinton/commit@v2.x
       env:
         GH_TOKEN: ${{ steps.app-token.outputs.token || env.GITHUB_TOKEN }}
@@ -145,7 +159,28 @@ runs:
         ref: ${{ github.event.workflow_run.head_branch || github.ref }}
 
     - name: Write Deployment URL to Summary
+      if: inputs.action == 'deploy'
       shell: bash
       run: |
         echo "### Deployment URL" >> $GITHUB_STEP_SUMMARY
         echo "${{ steps.deno_project.outputs.deployment_url }}" >> $GITHUB_STEP_SUMMARY
+
+    # === DELETE STEP ===
+    - name: Delete Deno Deploy Project
+      if: inputs.action == 'delete'
+      shell: bash
+      env:
+        DENO_DEPLOY_TOKEN: ${{ inputs.token }}
+      run: |
+        deployctl projects delete \
+          --token=$DENO_DEPLOY_TOKEN \
+          --project=$PROJECT_NAME \
+          --force \
+          --color=never || true
+
+    - name: Write Deletion to Summary
+      if: inputs.action == 'delete'
+      shell: bash
+      run: |
+        echo "### Deployment URL" >> $GITHUB_STEP_SUMMARY
+        echo "Deployment \`${PROJECT_NAME}\` has been deleted." >> $GITHUB_STEP_SUMMARY

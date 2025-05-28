@@ -1,5 +1,6 @@
 name: "Deploy to Deno"
-description: "Checks out the repository, creates an entry point, and publishes the project to Deno."
+description: "Checks out the repository, creates an entry point, and publishes the project to Deno.
+ If environment variables are set, they will get published with the deployment as well."
 inputs:
   pluginEntry:
     description: "The path to the plugin entry file."

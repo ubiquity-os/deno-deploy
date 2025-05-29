@@ -4,7 +4,6 @@ Deploys a plugin to Deno, and deletes it if the related branch is deleted.
 ## Requirements
 - your plugin should be written for ESM
 - imports should not be shortened (e.g. `./myFolder` containing `index.ts` should be written as `./myFolder/index`)
-- imports of external files like `.json` should have a type check (`import myJson from "./myJson.json" with { type: "json" }`)
 - there should be an entry point for `fetch`, exported as a default
 
 ## Example

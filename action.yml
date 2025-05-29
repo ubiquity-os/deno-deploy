@@ -80,7 +80,16 @@ runs:
       shell: bash
       run: |
         find src -name "*.ts" -type f -exec sh -c '
-          sed -i.bak "s/from \"\.\([^\"]*\)\"/from \".\1.ts\"/g; s/from '"'"'\.\([^'"'"']*\)'"'"'/from '"'"'.\1.ts'"'"'/g; s/\.json\.ts/.json/g; s/\.css\.ts/.css/g; s/\.svg\.ts/.svg/g; s/\.ts\.ts/.ts/g" "$1"
+          sed -i.bak "
+            s/from \"\(\.\+[^\"]*\)\.json\"/from \"\1.json\" with { type: \"json\" }/g;
+            s/from '"'"'\(\.\+[^'"'"']*\)\.json'"'"'/from '"'"'\1.json'"'"' with { type: \"json\" }/g;
+            s/from \"\(\.\+[^\"]*\)\"/from \"\1.ts\"/g;
+            s/from '"'"'\(\.\+[^'"'"']*\)'"'"'/from '"'"'\1.ts'"'"'/g;
+            s/\.json\.ts\" with { type: \"json\" }/.json\" with { type: \"json\" }/g;
+            s/\.css\.ts/.css/g;
+            s/\.svg\.ts/.svg/g;
+            s/\.ts\.ts/.ts/g
+          " "$1"
         ' _ {} \;
         find src -name "*.ts.bak" -delete
 

@@ -32,6 +32,7 @@ jobs:
     steps:
       - uses: ubiquity-os/deno-deploy@main
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Add all the environment variables required by your plugin here
           KERNEL_PUBLIC_KEY: ${{ secrets.KERNEL_PUBLIC_KEY }}
         with:

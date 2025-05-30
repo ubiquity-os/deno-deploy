@@ -39,6 +39,8 @@ runs:
         # Deno project names cannot exceed 26 characters
         new_name=$(echo "$new_name" | cut -c 1-26)
         echo "DENO_PROJECT_NAME=$new_name" >> $GITHUB_ENV
+        DENO_DEPLOYMENT_ID=${{ github.sha }}
+        echo "DENO_DEPLOYMENT_ID=$DENO_DEPLOYMENT_ID" >> $GITHUB_ENV        
 
     # === DEPLOY STEPS ===
     - name: Generate .env File
@@ -108,10 +110,8 @@ runs:
         
         PROJECT_INFO=$(deployctl projects show --token=$DENO_DEPLOY_TOKEN --project=$DENO_PROJECT_NAME --color=never)
         PROJECT_URL=$(echo "$PROJECT_INFO" | grep "Domain(s):" | awk '{print $2}')
-        DENO_DEPLOYMENT_ID=${{ github.sha }}
         
         echo "PROJECT_URL=$PROJECT_URL" >> $GITHUB_ENV
-        echo "DENO_DEPLOYMENT_ID=$DENO_DEPLOYMENT_ID" >> $GITHUB_ENV
         echo "deployment_url=$PROJECT_URL" >> $GITHUB_OUTPUT
 
     - name: Update manifest.json with deployment URL

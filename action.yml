@@ -1,0 +1,217 @@
+name: "Deploy to Deno"
+description: "Checks out the repository, creates an entry point, and publishes the project to Deno.
+ If environment variables are set, they will get published with the deployment as well."
+inputs:
+  action:
+    description: "Action to perform: 'deploy' or 'delete' the project."
+    required: true
+    default: "deploy"
+  pluginEntry:
+    description: "The path to the plugin entry file. It is expected to export 'fetch' as a default."
+    required: false
+    default: "./worker"
+  token:
+    description: "Deno token for publishing."
+    required: true
+outputs: {}
+runs:
+  using: "composite"
+  steps:
+    - name: Check out the repository
+      if: inputs.action == 'deploy'
+      uses: actions/checkout@v4
+
+    - name: Setup Deno
+      uses: denoland/setup-deno@v2
+      with:
+        deno-version: v2.x
+
+    - name: Install CLI
+      shell: bash
+      run: deno install -gArf jsr:@deno/deployctl
+
+    - name: Prepare Environment Variables
+      shell: bash
+      run: |
+        branch_name=$(echo '${{ github.event.ref || github.event.workflow_run.head_branch || github.ref }}' | sed 's#refs/heads/##' | sed 's#[^a-zA-Z0-9]#-#g')
+        project_name="${{ github.event.repository.name }}"
+        new_name="${project_name}-${branch_name}"
+        # Deno project names cannot exceed 26 characters
+        new_name=$(echo "$new_name" | cut -c 1-26)
+        echo "DENO_PROJECT_NAME=$new_name" >> $GITHUB_ENV
+        DENO_DEPLOYMENT_ID=${{ github.sha }}
+        echo "DENO_DEPLOYMENT_ID=$DENO_DEPLOYMENT_ID" >> $GITHUB_ENV        
+
+    # === DEPLOY STEPS ===
+    - name: Generate .env File
+      if: inputs.action == 'deploy'
+      shell: bash
+      run: |
+        cat > generate-env.ts <<'EOF'
+        const envVars = Deno.env.toObject();
+        const filtered = Object.entries(envVars)
+          .filter(([k, v]) => !/^(GITHUB_|RUNNER_|CI|HOME|PATH|PWD|SHELL|USER|LANG|LC_|TZ|ACTIONS_)/.test(k))
+          .filter(([k, v]) => v !== undefined && v !== null && v.trim() !== "")
+          .reduce((acc, [k,v]) => ({...acc, [k]:v}), {});
+        await Deno.writeTextFile(".env", 
+          Object.entries(filtered)
+            .map(([k,v]) => `${k}="${v.replace(/"/g, '\\"')}"`)
+            .join("\n")
+        );
+        EOF
+        deno run --allow-env --allow-write=.env generate-env.ts
+        rm generate-env.ts
+
+    - name: Create Deno Entry Point
+      if: inputs.action == 'deploy'
+      shell: bash
+      run: |
+        mkdir -p src
+        cat << 'EOF' > src/deno.ts
+        import worker from "${{ inputs.pluginEntry }}";
+        export default {
+          async fetch(request: Request, env: Record<string, unknown>, executionCtx?: ExecutionContext) {
+            Object.assign(env, Deno.env.toObject());
+            return worker.fetch(request, env, executionCtx);
+          },
+        };
+        EOF
+
+    - name: Fix Import Extensions
+      if: inputs.action == 'deploy'
+      shell: bash
+      run: |
+        find src -name "*.ts" -type f -exec sh -c '
+          sed -i.bak "
+            s/from \"\(\.\+[^\"]*\)\.json\"/from \"\1.json\" with { type: \"json\" }/g;
+            s/from '"'"'\(\.\+[^'"'"']*\)\.json'"'"'/from '"'"'\1.json'"'"' with { type: \"json\" }/g;
+            s/from \"\(\.\+[^\"]*\)\"/from \"\1.ts\"/g;
+            s/from '"'"'\(\.\+[^'"'"']*\)'"'"'/from '"'"'\1.ts'"'"'/g;
+            s/\.json\.ts\" with { type: \"json\" }/.json\" with { type: \"json\" }/g;
+            s/\.css\.ts/.css/g;
+            s/\.svg\.ts/.svg/g;
+            s/\.ts\.ts/.ts/g
+          " "$1"
+        ' _ {} \;
+        find src -name "*.ts.bak" -delete
+
+    - name: Manage Deno Deploy Project (Deploy)
+      if: inputs.action == 'deploy'
+      shell: bash
+      id: deno_project
+      env:
+        DENO_DEPLOY_TOKEN: ${{ inputs.token }}
+      run: |
+        deployctl projects create \
+          --token=$DENO_DEPLOY_TOKEN \
+          --project=$DENO_PROJECT_NAME \
+          --force \
+          --color=never || true
+        
+        PROJECT_INFO=$(deployctl projects show --token=$DENO_DEPLOY_TOKEN --project=$DENO_PROJECT_NAME --color=never)
+        PROJECT_URL=$(echo "$PROJECT_INFO" | grep "Domain(s):" | awk '{print $2}')
+        
+        echo "PROJECT_URL=$PROJECT_URL" >> $GITHUB_ENV
+        echo "deployment_url=$PROJECT_URL" >> $GITHUB_OUTPUT
+
+    - name: Update manifest.json with deployment URL
+      if: inputs.action == 'deploy'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const path = require('path');
+          
+          const manifestPath = path.resolve("${{ github.workspace }}", './manifest.json');
+
+          if (!fs.existsSync(manifestPath)) {
+            console.log('manifest.json not found. Skipping update.');
+            return;
+          }
+
+          const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+          
+          manifest["homepage_url"] = "${{ steps.deno_project.outputs.deployment_url }}";
+          
+          const updatedManifest = JSON.stringify(manifest, null, 2);
+          fs.writeFileSync(manifestPath, updatedManifest);
+          console.log('Updated manifest:', updatedManifest);
+
+    - name: Deploy to Deno
+      if: inputs.action == 'deploy'
+      shell: bash
+      env:
+        DENO_DEPLOY_TOKEN: ${{ inputs.token }}
+      run: |
+        deployctl deploy \
+          --token=$DENO_DEPLOY_TOKEN \
+          --project=$DENO_PROJECT_NAME \
+          --env-file=.env \
+          --entrypoint=src/deno.ts \
+          --prod
+
+    - name: Get GitHub App token
+      if: inputs.action == 'deploy' && env.APP_ID != '' && env.APP_PRIVATE_KEY != ''
+      uses: actions/create-github-app-token@v1
+      id: app-token
+      with:
+        app-id: ${{ env.APP_ID }}
+        private-key: ${{ env.APP_PRIVATE_KEY }}
+
+    - name: Check if manifest.json exists
+      id: check_manifest
+      shell: bash
+      run: |
+        if [ -f manifest.json ]; then
+          echo "exists=true" >> $GITHUB_OUTPUT
+        else
+          echo "exists=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Format manifest.json using Deno
+      if: inputs.action == 'deploy' && steps.check_manifest.outputs.exists == 'true'
+      shell: bash
+      run: |
+        if [ -f manifest.json ]; then
+          deno fmt --ext=json manifest.json
+        else
+          echo "manifest.json not found. Skipping formatting."
+        fi
+
+    - name: Commit file
+      if: inputs.action == 'deploy' && steps.check_manifest.outputs.exists == 'true'
+      uses: swinton/commit@v2.x
+      env:
+        GH_TOKEN: ${{ steps.app-token.outputs.token || env.GITHUB_TOKEN }}
+      with:
+        files: |
+          manifest.json
+        commit-message: "chore: [skip ci] update manifest.json url"
+        ref: ${{ github.event.workflow_run.head_branch || github.ref }}
+
+    - name: Write Deployment URL to Summary
+      if: inputs.action == 'deploy'
+      shell: bash
+      run: |
+        echo "### Deployment URL" >> $GITHUB_STEP_SUMMARY
+        echo "${{ steps.deno_project.outputs.deployment_url }}" >> $GITHUB_STEP_SUMMARY
+
+    # === DELETE STEP ===
+    - name: Delete Deno Deploy Project
+      if: inputs.action == 'delete'
+      shell: bash
+      env:
+        DENO_DEPLOY_TOKEN: ${{ inputs.token }}
+      run: |
+        deployctl projects delete \
+          --token=$DENO_DEPLOY_TOKEN \
+          --project=$DENO_PROJECT_NAME \
+          --force \
+          --color=never || true
+
+    - name: Write Deletion to Summary
+      if: inputs.action == 'delete'
+      shell: bash
+      run: |
+        echo "### Deployment URL" >> $GITHUB_STEP_SUMMARY
+        echo "Deployment \`${DENO_PROJECT_NAME}\` has been deleted." >> $GITHUB_STEP_SUMMARY

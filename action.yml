@@ -38,7 +38,7 @@ runs:
         new_name="${project_name}-${branch_name}"
         # Deno project names cannot exceed 26 characters
         new_name=$(echo "$new_name" | cut -c 1-26)
-        echo "PROJECT_NAME=$new_name" >> $GITHUB_ENV
+        echo "DENO_PROJECT_NAME=$new_name" >> $GITHUB_ENV
 
     # === DEPLOY STEPS ===
     - name: Generate .env File
@@ -102,14 +102,16 @@ runs:
       run: |
         deployctl projects create \
           --token=$DENO_DEPLOY_TOKEN \
-          --project=$PROJECT_NAME \
+          --project=$DENO_PROJECT_NAME \
           --force \
           --color=never || true
         
-        PROJECT_INFO=$(deployctl projects show --token=$DENO_DEPLOY_TOKEN --project=$PROJECT_NAME --color=never)
+        PROJECT_INFO=$(deployctl projects show --token=$DENO_DEPLOY_TOKEN --project=$DENO_PROJECT_NAME --color=never)
         PROJECT_URL=$(echo "$PROJECT_INFO" | grep "Domain(s):" | awk '{print $2}')
+        DENO_DEPLOYMENT_ID=$(deployctl deployments show --token=$DENO_DEPLOY_TOKEN --project=$DENO_PROJECT_NAME | jq .build.id)
         
         echo "PROJECT_URL=$PROJECT_URL" >> $GITHUB_ENV
+        echo "DENO_DEPLOYMENT_ID=$DENO_DEPLOYMENT_ID" >> $GITHUB_ENV
         echo "deployment_url=$PROJECT_URL" >> $GITHUB_OUTPUT
 
     - name: Update manifest.json with deployment URL
@@ -143,7 +145,7 @@ runs:
       run: |
         deployctl deploy \
           --token=$DENO_DEPLOY_TOKEN \
-          --project=$PROJECT_NAME \
+          --project=$DENO_PROJECT_NAME \
           --env-file=.env \
           --entrypoint=src/deno.ts \
           --prod
@@ -203,7 +205,7 @@ runs:
       run: |
         deployctl projects delete \
           --token=$DENO_DEPLOY_TOKEN \
-          --project=$PROJECT_NAME \
+          --project=$DENO_PROJECT_NAME \
           --force \
           --color=never || true
 
@@ -212,4 +214,4 @@ runs:
       shell: bash
       run: |
         echo "### Deployment URL" >> $GITHUB_STEP_SUMMARY
-        echo "Deployment \`${PROJECT_NAME}\` has been deleted." >> $GITHUB_STEP_SUMMARY
+        echo "Deployment \`${DENO_PROJECT_NAME}\` has been deleted." >> $GITHUB_STEP_SUMMARY

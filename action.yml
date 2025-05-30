@@ -108,7 +108,7 @@ runs:
         
         PROJECT_INFO=$(deployctl projects show --token=$DENO_DEPLOY_TOKEN --project=$DENO_PROJECT_NAME --color=never)
         PROJECT_URL=$(echo "$PROJECT_INFO" | grep "Domain(s):" | awk '{print $2}')
-        DENO_DEPLOYMENT_ID=$(deployctl deployments show --token=$DENO_DEPLOY_TOKEN --project=$DENO_PROJECT_NAME | jq .build.id)
+        DENO_DEPLOYMENT_ID=${{ github.sha }}
         
         echo "PROJECT_URL=$PROJECT_URL" >> $GITHUB_ENV
         echo "DENO_DEPLOYMENT_ID=$DENO_DEPLOYMENT_ID" >> $GITHUB_ENV

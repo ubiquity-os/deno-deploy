@@ -13,6 +13,9 @@ inputs:
   token:
     description: "Deno token for publishing."
     required: true
+  organization:
+    description: The organization to target when deploying the project. If omitted, will default to the user account.
+    required: false
 outputs: {}
 runs:
   using: "composite"
@@ -106,7 +109,8 @@ runs:
           --token=$DENO_DEPLOY_TOKEN \
           --project=$DENO_PROJECT_NAME \
           --force \
-          --color=never || true
+          --color=never \
+          ${{ inputs.organization && format('--org={0}', inputs.organization) || '' }} || true
         
         PROJECT_INFO=$(deployctl projects show --token=$DENO_DEPLOY_TOKEN --project=$DENO_PROJECT_NAME --color=never)
         PROJECT_URL=$(echo "$PROJECT_INFO" | grep "Domain(s):" | awk '{print $2}')

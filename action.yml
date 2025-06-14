@@ -41,6 +41,10 @@ runs:
       shell: bash
       run: deno install -gArf jsr:@deno/deployctl
 
+    - name: Stat
+      shell: bash
+      run: pwd && ls -la src
+
     - name: Prepare Environment Variables
       shell: bash
       run: |

@@ -22,11 +22,11 @@ inputs:
     required: false
     default: "src/deno.ts"
   generateEnv:
-    description: "If the environment should be auto-generated based on the current environment."
+    description: "Generates the .env file based on the current environment if true."
     required: false
     default: "true"
   project_name:
-    description: "Overrides the Deno Deploy project name."
+    description: "Overrides the auto-generated Deno Deploy project name."
     required: false
 outputs: {}
 runs:
@@ -40,10 +40,6 @@ runs:
     - name: Install CLI
       shell: bash
       run: deno install -gArf jsr:@deno/deployctl
-
-    - name: Stat
-      shell: bash
-      run: pwd && ls -la src
 
     - name: Prepare Environment Variables
       shell: bash

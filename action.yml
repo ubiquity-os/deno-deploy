@@ -1,29 +1,37 @@
 name: "Deploy to Deno"
-description: "Checks out the repository, creates an entry point, and publishes the project to Deno.
- If environment variables are set, they will get published with the deployment as well."
+description:
+  "Checks out the repository and publishes or deletes the project on Deno Deploy.
+  If generateEnv is true, they will get published with the deployment environment as well."
 inputs:
   action:
     description: "Action to perform: 'deploy' or 'delete' the project."
     required: true
     default: "deploy"
-  pluginEntry:
-    description: "The path to the plugin entry file. It is expected to export 'fetch' as a default."
-    required: false
-    default: "./worker"
   token:
     description: "Deno token for publishing."
     required: true
   organization:
     description: The organization to target when deploying the project. If omitted, will default to the user account.
     required: false
+  production:
+    description: "Deploy to production (uses --prod flag)"
+    required: false
+    default: "true"
+  entrypoint:
+    description: "The entrypoint to the script that will be deployed."
+    required: false
+    default: "src/deno.ts"
+  generateEnv:
+    description: "Generates the .env file based on the current environment if true."
+    required: false
+    default: "true"
+  project_name:
+    description: "Overrides the auto-generated Deno Deploy project name."
+    required: false
 outputs: {}
 runs:
   using: "composite"
   steps:
-    - name: Check out the repository
-      if: inputs.action == 'deploy'
-      uses: actions/checkout@v4
-
     - name: Setup Deno
       uses: denoland/setup-deno@v2
       with:
@@ -36,18 +44,22 @@ runs:
     - name: Prepare Environment Variables
       shell: bash
       run: |
-        branch_name=$(echo '${{ github.event.ref || github.event.workflow_run.head_branch || github.ref }}' | sed 's#refs/heads/##' | sed 's#[^a-zA-Z0-9]#-#g')
-        project_name="${{ github.event.repository.name }}"
-        new_name="${project_name}-${branch_name}"
+        if [ -n "${{ inputs.project_name }}" ]; then
+          new_name="${{ inputs.project_name }}"
+        else
+          project_name="${{ github.event.repository.name }}"
+          branch_name=$(echo '${{ github.event.ref || github.event.workflow_run.head_branch || github.ref }}' | sed 's#refs/heads/##' | sed 's#[^a-zA-Z0-9]#-#g')
+          new_name="${project_name}-${branch_name}"
+        fi
         # Deno project names cannot exceed 26 characters
         new_name=$(echo "$new_name" | cut -c 1-26)
         echo "DENO_PROJECT_NAME=$new_name" >> $GITHUB_ENV
         DENO_DEPLOYMENT_ID=${{ github.sha }}
-        echo "DENO_DEPLOYMENT_ID=$DENO_DEPLOYMENT_ID" >> $GITHUB_ENV        
+        echo "DENO_DEPLOYMENT_ID=$DENO_DEPLOYMENT_ID" >> $GITHUB_ENV
 
     # === DEPLOY STEPS ===
     - name: Generate .env File
-      if: inputs.action == 'deploy'
+      if: inputs.action == 'deploy' && inputs.generateEnv == 'true'
       shell: bash
       run: |
         cat > generate-env.ts <<'EOF'
@@ -65,39 +77,6 @@ runs:
         deno run --allow-env --allow-write=.env generate-env.ts
         rm generate-env.ts
 
-    - name: Create Deno Entry Point
-      if: inputs.action == 'deploy'
-      shell: bash
-      run: |
-        mkdir -p src
-        cat << 'EOF' > src/deno.ts
-        import worker from "${{ inputs.pluginEntry }}";
-        export default {
-          async fetch(request: Request, env: Record<string, unknown>, executionCtx?: ExecutionContext) {
-            Object.assign(env, Deno.env.toObject());
-            return worker.fetch(request, env, executionCtx);
-          },
-        };
-        EOF
-
-    - name: Fix Import Extensions
-      if: inputs.action == 'deploy'
-      shell: bash
-      run: |
-        find src -name "*.ts" -type f -exec sh -c '
-          sed -i.bak "
-            s/from \"\(\.\+[^\"]*\)\.json\"/from \"\1.json\" with { type: \"json\" }/g;
-            s/from '"'"'\(\.\+[^'"'"']*\)\.json'"'"'/from '"'"'\1.json'"'"' with { type: \"json\" }/g;
-            s/from \"\(\.\+[^\"]*\)\"/from \"\1.ts\"/g;
-            s/from '"'"'\(\.\+[^'"'"']*\)'"'"'/from '"'"'\1.ts'"'"'/g;
-            s/\.json\.ts\" with { type: \"json\" }/.json\" with { type: \"json\" }/g;
-            s/\.css\.ts/.css/g;
-            s/\.svg\.ts/.svg/g;
-            s/\.ts\.ts/.ts/g
-          " "$1"
-        ' _ {} \;
-        find src -name "*.ts.bak" -delete
-
     - name: Manage Deno Deploy Project (Deploy)
       if: inputs.action == 'deploy'
       shell: bash
@@ -111,10 +90,9 @@ runs:
           --force \
           --color=never \
           ${{ inputs.organization && format('--org={0}', inputs.organization) || '' }} || true
-        
         PROJECT_INFO=$(deployctl projects show --token=$DENO_DEPLOY_TOKEN --project=$DENO_PROJECT_NAME --color=never)
         PROJECT_URL=$(echo "$PROJECT_INFO" | grep "Domain(s):" | awk '{print $2}')
-        
+
         echo "PROJECT_URL=$PROJECT_URL" >> $GITHUB_ENV
         echo "deployment_url=$PROJECT_URL" >> $GITHUB_OUTPUT
 
@@ -125,7 +103,7 @@ runs:
         script: |
           const fs = require('fs');
           const path = require('path');
-          
+
           const manifestPath = path.resolve("${{ github.workspace }}", './manifest.json');
 
           if (!fs.existsSync(manifestPath)) {
@@ -134,9 +112,9 @@ runs:
           }
 
           const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-          
+
           manifest["homepage_url"] = "${{ steps.deno_project.outputs.deployment_url }}";
-          
+
           const updatedManifest = JSON.stringify(manifest, null, 2);
           fs.writeFileSync(manifestPath, updatedManifest);
           console.log('Updated manifest:', updatedManifest);
@@ -150,9 +128,9 @@ runs:
         deployctl deploy \
           --token=$DENO_DEPLOY_TOKEN \
           --project=$DENO_PROJECT_NAME \
-          --env-file=.env \
-          --entrypoint=src/deno.ts \
-          --prod
+          --entrypoint=${{ inputs.entrypoint }} \
+          ${{ inputs.generateEnv == 'true' && '--env-file=.env' || '' }} \
+          ${{ inputs.production == 'true' && '--prod' || '' }}
 
     - name: Get GitHub App token
       if: inputs.action == 'deploy' && env.APP_ID != '' && env.APP_PRIVATE_KEY != ''

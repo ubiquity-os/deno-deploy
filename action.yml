@@ -90,7 +90,6 @@ runs:
           --force \
           --color=never \
           ${{ inputs.organization && format('--org={0}', inputs.organization) || '' }} || true
-
         PROJECT_INFO=$(deployctl projects show --token=$DENO_DEPLOY_TOKEN --project=$DENO_PROJECT_NAME --color=never)
         PROJECT_URL=$(echo "$PROJECT_INFO" | grep "Domain(s):" | awk '{print $2}')
 

@@ -32,10 +32,6 @@ outputs: {}
 runs:
   using: "composite"
   steps:
-    - name: Check out the repository
-      if: inputs.action == 'deploy'
-      uses: actions/checkout@v4
-
     - name: Setup Deno
       uses: denoland/setup-deno@v2
       with:

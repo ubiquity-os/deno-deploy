@@ -104,8 +104,9 @@ runs:
           --force \
           --color=never \
           ${{ inputs.organization && format('--org={0}', inputs.organization) || '' }} || true
-        PROJECT_INFO=$(deployctl projects show --token=$DENO_DEPLOY_TOKEN --project=$DENO_PROJECT_NAME --color=never)
-        PROJECT_URL=$(echo "$PROJECT_INFO" | grep "Domain(s):" | awk '{print $2}')
+
+        # Construct the deployment URL directly (Deno Deploy URLs follow predictable pattern)
+        PROJECT_URL="https://${DENO_PROJECT_NAME}.deno.dev"
 
         echo "PROJECT_URL=$PROJECT_URL" >> $GITHUB_ENV
         echo "deployment_url=$PROJECT_URL" >> $GITHUB_OUTPUT

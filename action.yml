@@ -47,12 +47,26 @@ runs:
         if [ -n "${{ inputs.project_name }}" ]; then
           new_name="${{ inputs.project_name }}"
         else
-          project_name="${{ github.event.repository.name }}"
+          # Sanitize both project name and branch name to meet Deno Deploy requirements
+          project_name=$(echo "${{ github.event.repository.name }}" | sed 's#[^a-zA-Z0-9]#-#g')
           branch_name=$(echo '${{ github.event.ref || github.event.workflow_run.head_branch || github.ref }}' | sed 's#refs/heads/##' | sed 's#[^a-zA-Z0-9]#-#g')
           new_name="${project_name}-${branch_name}"
         fi
-        # Deno project names cannot exceed 26 characters
-        new_name=$(echo "$new_name" | cut -c 1-26)
+
+        # Clean up the name to meet Deno Deploy requirements:
+        # - Only a-z, 0-9, and - allowed
+        # - Must not start or end with hyphen
+        # - Cannot exceed 26 characters
+        new_name=$(echo "$new_name" | sed 's#[^a-zA-Z0-9-]#-#g' | sed 's#^-*##' | sed 's#-*$##' | cut -c 1-26)
+
+        # Ensure we don't end with a hyphen after truncation
+        new_name=$(echo "$new_name" | sed 's#-*$##')
+
+        # Ensure minimum length of 3 characters
+        if [ ${#new_name} -lt 3 ]; then
+          new_name="${new_name}app"
+        fi
+
         echo "DENO_PROJECT_NAME=$new_name" >> $GITHUB_ENV
         DENO_DEPLOYMENT_ID=${{ github.sha }}
         echo "DENO_DEPLOYMENT_ID=$DENO_DEPLOYMENT_ID" >> $GITHUB_ENV
@@ -68,7 +82,7 @@ runs:
           .filter(([k, v]) => !/^(GITHUB_|RUNNER_|CI|HOME|PATH|PWD|SHELL|USER|LANG|LC_|TZ|ACTIONS_)/.test(k))
           .filter(([k, v]) => v !== undefined && v !== null && v.trim() !== "")
           .reduce((acc, [k,v]) => ({...acc, [k]:v}), {});
-        await Deno.writeTextFile(".env", 
+        await Deno.writeTextFile(".env",
           Object.entries(filtered)
             .map(([k,v]) => `${k}="${v.replace(/"/g, '\\"')}"`)
             .join("\n")

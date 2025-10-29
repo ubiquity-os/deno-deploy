@@ -134,12 +134,6 @@ runs:
           fs.writeFileSync(manifestPath, updatedManifest);
           console.log('Updated manifest:', updatedManifest);
 
-    - name: Format manifest using Prettier
-      shell: bash
-      continue-on-error: true
-      run: |
-        npx prettier --write manifest.json
-
     - name: Deploy to Deno
       if: inputs.action == 'deploy'
       shell: bash
@@ -171,15 +165,12 @@ runs:
           echo "exists=false" >> $GITHUB_OUTPUT
         fi
 
-    - name: Format manifest.json using Deno
-      if: inputs.action == 'deploy' && steps.check_manifest.outputs.exists == 'true'
+    - name: Format manifest using Prettier
       shell: bash
+      if: inputs.action == 'deploy' && steps.check_manifest.outputs.exists == 'true'
+      continue-on-error: true
       run: |
-        if [ -f manifest.json ]; then
-          deno fmt --ext=json manifest.json
-        else
-          echo "manifest.json not found. Skipping formatting."
-        fi
+        npx prettier --write manifest.json
 
     - name: Commit file
       if: inputs.action == 'deploy' && steps.check_manifest.outputs.exists == 'true'

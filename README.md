@@ -1,7 +1,9 @@
 # deno-deploy
+
 Deploys a plugin to Deno, and deletes it if the related branch is deleted.
 
 ## Requirements
+
 - your plugin should be written for ESM
 - imports should not be shortened (e.g. `./myFolder` containing `index.ts` should be written as `./myFolder/index`)
 - there should be an entry point for `fetch`, exported as a default

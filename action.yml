@@ -138,7 +138,7 @@ runs:
       shell: bash
       continue-on-error: true
       run: |
-        bunx prettier --write manifest.json
+        npx prettier --write manifest.json
 
     - name: Deploy to Deno
       if: inputs.action == 'deploy'

@@ -37,9 +37,9 @@ runs:
       with:
         deno-version: v2.x
 
-    - name: Install CLI
-      shell: bash
-      run: deno install -gArf jsr:@deno/deployctl
+#    - name: Install CLI
+#      shell: bash
+#      run: deno install -gArf jsr:@deno/deployctl
 
     - name: Prepare Environment Variables
       shell: bash
@@ -98,18 +98,19 @@ runs:
       env:
         DENO_DEPLOY_TOKEN: ${{ inputs.token }}
       run: |
-        deployctl projects create \
-          --token=$DENO_DEPLOY_TOKEN \
-          --project=$DENO_PROJECT_NAME \
-          --force \
-          --color=never \
-          ${{ inputs.organization && format('--org={0}', inputs.organization) || '' }} || true
-
-        # Construct the deployment URL directly (Deno Deploy URLs follow predictable pattern)
-        PROJECT_URL="https://${DENO_PROJECT_NAME}.deno.dev"
-
-        echo "PROJECT_URL=$PROJECT_URL" >> $GITHUB_ENV
-        echo "deployment_url=$PROJECT_URL" >> $GITHUB_OUTPUT
+        deno deploy --org ${{ inputs.organization }} --app $DENO_PROJECT_NAME || true
+#        deployctl projects create \
+#          --token=$DENO_DEPLOY_TOKEN \
+#          --project=$DENO_PROJECT_NAME \
+#          --force \
+#          --color=never \
+#          ${{ inputs.organization && format('--org={0}', inputs.organization) || '' }} || true
+#
+#        # Construct the deployment URL directly (Deno Deploy URLs follow predictable pattern)
+#        PROJECT_URL="https://${DENO_PROJECT_NAME}.deno.dev"
+#
+#        echo "PROJECT_URL=$PROJECT_URL" >> $GITHUB_ENV
+#        echo "deployment_url=$PROJECT_URL" >> $GITHUB_OUTPUT
 
     - name: Update manifest.json with deployment URL
       if: inputs.action == 'deploy'
@@ -140,12 +141,13 @@ runs:
       env:
         DENO_DEPLOY_TOKEN: ${{ inputs.token }}
       run: |
-        deployctl deploy \
-          --token=$DENO_DEPLOY_TOKEN \
-          --project=$DENO_PROJECT_NAME \
-          --entrypoint=${{ inputs.entrypoint }} \
-          ${{ inputs.generateEnv == 'true' && '--env-file=.env' || '' }} \
-          ${{ inputs.production == 'true' && '--prod' || '' }}
+        deno deploy env --org Meniole --app command-start-stop load .env
+#        deployctl deploy \
+#          --token=$DENO_DEPLOY_TOKEN \
+#          --project=$DENO_PROJECT_NAME \
+#          --entrypoint=${{ inputs.entrypoint }} \
+#          ${{ inputs.generateEnv == 'true' && '--env-file=.env' || '' }} \
+#          ${{ inputs.production == 'true' && '--prod' || '' }}
 
     - name: Get GitHub App token
       if: inputs.action == 'deploy' && env.APP_ID != '' && env.APP_PRIVATE_KEY != ''
@@ -191,21 +193,21 @@ runs:
         echo "${{ steps.deno_project.outputs.deployment_url }}" >> $GITHUB_STEP_SUMMARY
 
     # === DELETE STEP ===
-    - name: Delete Deno Deploy Project
-      if: inputs.action == 'delete'
-      shell: bash
-      env:
-        DENO_DEPLOY_TOKEN: ${{ inputs.token }}
-      run: |
-        deployctl projects delete \
-          --token=$DENO_DEPLOY_TOKEN \
-          --project=$DENO_PROJECT_NAME \
-          --force \
-          --color=never || true
-
-    - name: Write Deletion to Summary
-      if: inputs.action == 'delete'
-      shell: bash
-      run: |
-        echo "### Deployment URL" >> $GITHUB_STEP_SUMMARY
-        echo "Deployment \`${DENO_PROJECT_NAME}\` has been deleted." >> $GITHUB_STEP_SUMMARY
+#    - name: Delete Deno Deploy Project
+#      if: inputs.action == 'delete'
+#      shell: bash
+#      env:
+#        DENO_DEPLOY_TOKEN: ${{ inputs.token }}
+#      run: |
+#        deployctl projects delete \
+#          --token=$DENO_DEPLOY_TOKEN \
+#          --project=$DENO_PROJECT_NAME \
+#          --force \
+#          --color=never || true
+#
+#    - name: Write Deletion to Summary
+#      if: inputs.action == 'delete'
+#      shell: bash
+#      run: |
+#        echo "### Deployment URL" >> $GITHUB_STEP_SUMMARY
+#        echo "Deployment \`${DENO_PROJECT_NAME}\` has been deleted." >> $GITHUB_STEP_SUMMARY

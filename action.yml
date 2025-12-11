@@ -163,7 +163,31 @@ runs:
         echo "Will use the following deno.jsonc:"
         cat deno.jsonc
         echo ".env file present: $(test -f .env && echo 'yes' || echo 'no')"
-        deno deploy env --token "$DENO_DEPLOY_TOKEN" load .env
+        contexts=$([ "${{ inputs.production }}" = "true" ] && echo "production" || echo "preview")
+
+        while IFS= read -r line || [ -n "$line" ]; do
+          if [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]]; then
+            continue
+          fi
+
+          if [[ "$line" != *=* ]]; then
+            echo "Skipping invalid line: $line"
+            continue
+          fi
+
+          key="${line%%=*}"
+          value="${line#*=}"
+
+          key="$(echo "$key" | xargs)"
+          value="${value%$'\r'}"
+          value="${value#\"}"
+          value="${value%\"}"
+          value="${value//\\\"/\"}"
+
+          deno deploy env delete "$key" --token "$DENO_DEPLOY_TOKEN" || true
+          deno deploy env add "$key" "$value" --token "$DENO_DEPLOY_TOKEN"
+          deno deploy env update-contexts "$key" $contexts --token "$DENO_DEPLOY_TOKEN"
+        done < .env
 #        deployctl deploy \
 #          --token=$DENO_DEPLOY_TOKEN \
 #          --project=$DENO_PROJECT_NAME \

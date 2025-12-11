@@ -105,7 +105,7 @@ runs:
       env:
         DENO_DEPLOY_TOKEN: ${{ inputs.token }}
       run: |
-        deno deploy --org $DENO_ORG --app $DENO_PROJECT_NAME || true
+        deno deploy --token $DENO_DEPLOY_TOKEN --org $DENO_ORG --app $DENO_PROJECT_NAME || true
 #        deployctl projects create \
 #          --token=$DENO_DEPLOY_TOKEN \
 #          --project=$DENO_PROJECT_NAME \
@@ -148,7 +148,7 @@ runs:
       env:
         DENO_DEPLOY_TOKEN: ${{ inputs.token }}
       run: |
-        deno deploy env --org $DENO_ORG --app $DENO_PROJECT_NAME load .env
+        deno deploy env --token $DENO_DEPLOY_TOKEN --org $DENO_ORG --app $DENO_PROJECT_NAME load .env
 #        deployctl deploy \
 #          --token=$DENO_DEPLOY_TOKEN \
 #          --project=$DENO_PROJECT_NAME \

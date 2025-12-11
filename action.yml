@@ -174,8 +174,8 @@ runs:
           fi
 
           deno deploy env delete "$key" --token "$DENO_DEPLOY_TOKEN" || true
-          deno deploy env add "$key" "$value" --token "$DENO_DEPLOY_TOKEN"
-          deno deploy env update-contexts "$key" $contexts --token "$DENO_DEPLOY_TOKEN"
+          deno deploy env add "$key" "$value" --token "$DENO_DEPLOY_TOKEN" || true
+          deno deploy env update-contexts "$key" $contexts --token "$DENO_DEPLOY_TOKEN" || true
         }
 
         in_multiline=0

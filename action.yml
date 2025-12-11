@@ -70,6 +70,8 @@ runs:
         echo "DENO_PROJECT_NAME=$new_name" >> $GITHUB_ENV
         DENO_DEPLOYMENT_ID=${{ github.sha }}
         echo "DENO_DEPLOYMENT_ID=$DENO_DEPLOYMENT_ID" >> $GITHUB_ENV
+        DENO_ORG=${{ inputs.organization || github.repository_owner }}
+        echo "DENO_ORG=$DENO_ORG" >> $GITHUB_ENV
 
     # === DEPLOY STEPS ===
     - name: Generate .env File
@@ -98,7 +100,7 @@ runs:
       env:
         DENO_DEPLOY_TOKEN: ${{ inputs.token }}
       run: |
-        deno deploy --org ${{ inputs.organization }} --app $DENO_PROJECT_NAME || true
+        deno deploy --org $DENO_ORG --app $DENO_PROJECT_NAME || true
 #        deployctl projects create \
 #          --token=$DENO_DEPLOY_TOKEN \
 #          --project=$DENO_PROJECT_NAME \
@@ -141,7 +143,7 @@ runs:
       env:
         DENO_DEPLOY_TOKEN: ${{ inputs.token }}
       run: |
-        deno deploy env --org ${{ inputs.organization }} --app $DENO_PROJECT_NAME load .env
+        deno deploy env --org $DENO_ORG --app $DENO_PROJECT_NAME load .env
 #        deployctl deploy \
 #          --token=$DENO_DEPLOY_TOKEN \
 #          --project=$DENO_PROJECT_NAME \

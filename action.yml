@@ -192,21 +192,20 @@ runs:
           deno deploy env update-contexts "$key" $contexts --token "$DENO_DEPLOY_TOKEN" || true
         }
 
-        deno eval --ext=js "const data=JSON.parse(await Deno.readTextFile('env-vars.json')); for (const {key,value} of data) console.log(`${key}\t${value}`);" |
-        while IFS=$'\t' read -r key value_b64 || [ -n "$key" ]; do
+        tmp_env_vars=$(mktemp)
+
+        deno eval --ext=js "const data=JSON.parse(await Deno.readTextFile('env-vars.json')); for (const {key,value} of data) console.log(`${key}\t${value}`);" > "$tmp_env_vars"
+
+        while IFS=$'\t' read -r key value_b64; do
           if [ -z "$key" ] || [ -z "$value_b64" ]; then
             continue
           fi
 
           value="$(printf '%s' "$value_b64" | base64 --decode)"
           apply_env_var "$key" "$value"
-        done
-    #        deployctl deploy \
-    #          --token=$DENO_DEPLOY_TOKEN \
-    #          --project=$DENO_PROJECT_NAME \
-    #          --entrypoint=${{ inputs.entrypoint }} \
-    #          ${{ inputs.generateEnv == 'true' && '--env-file=.env' || '' }} \
-    #          ${{ inputs.production == 'true' && '--prod' || '' }}
+        done < "$tmp_env_vars"
+
+        rm -f "$tmp_env_vars"
 
     - name: Get GitHub App token
       if: inputs.action == 'deploy' && env.APP_ID != '' && env.APP_PRIVATE_KEY != ''

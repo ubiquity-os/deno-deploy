@@ -98,6 +98,18 @@ runs:
         deno run --allow-env --allow-write=.env generate-env.ts
         rm generate-env.ts
 
+    - name: Create deno.jsonc
+      shell: bash
+      run: |
+        cat > deno.jsonc <<EOF
+        {
+          "deploy": {
+            "org": "${DENO_ORG}",
+            "app": "${DENO_PROJECT_NAME}"
+          }
+        }
+        EOF
+
     - name: Manage Deno Deploy Project (Deploy)
       if: inputs.action == 'deploy'
       shell: bash

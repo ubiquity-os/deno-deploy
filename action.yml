@@ -163,7 +163,7 @@ runs:
         echo "Will use the following deno.jsonc:"
         cat deno.jsonc
         echo ".env file present: $(test -f .env && echo 'yes' || echo 'no')"
-        contexts=$([ "${{ inputs.production }}" = "true" ] && echo "production" || echo "preview")
+        contexts=$([ "${{ inputs.production }}" = "true" ] && echo "Production" || echo "Preview")
 
         apply_env_var() {
           local key="$1"

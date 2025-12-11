@@ -41,10 +41,6 @@ runs:
       with:
         deno-version: v2.x
 
-    #    - name: Install CLI
-    #      shell: bash
-    #      run: deno install -gArf jsr:@deno/deployctl
-
     - name: Prepare Environment Variables
       shell: bash
       run: |
@@ -143,18 +139,6 @@ runs:
         DENO_DEPLOY_TOKEN: ${{ inputs.token }}
       run: |
         deno deploy --token $DENO_DEPLOY_TOKEN --org $DENO_ORG --app $DENO_PROJECT_NAME || true
-    #        deployctl projects create \
-    #          --token=$DENO_DEPLOY_TOKEN \
-    #          --project=$DENO_PROJECT_NAME \
-    #          --force \
-    #          --color=never \
-    #          ${{ inputs.organization && format('--org={0}', inputs.organization) || '' }} || true
-    #
-    #        # Construct the deployment URL directly (Deno Deploy URLs follow predictable pattern)
-    #        PROJECT_URL="https://${DENO_PROJECT_NAME}.deno.dev"
-    #
-    #        echo "PROJECT_URL=$PROJECT_URL" >> $GITHUB_ENV
-    #        echo "deployment_url=$PROJECT_URL" >> $GITHUB_OUTPUT
 
     - name: Update manifest.json with deployment URL
       if: inputs.action == 'deploy'
@@ -188,7 +172,7 @@ runs:
         echo "Will use the following deno.jsonc:"
         cat deno.jsonc
         echo "env-vars.json present: $(test -f env-vars.json && echo 'yes' || echo 'no')"
-        contexts=$([ "${{ inputs.production }}" = "true" ] && echo "production" || echo "preview")
+        contexts=$([ "${{ inputs.production }}" = "true" ] && echo "Production" || echo "Preview")
 
         if [ ! -f env-vars.json ]; then
           echo "No env-vars.json found; skipping env sync."
@@ -208,11 +192,8 @@ runs:
           deno deploy env update-contexts "$key" $contexts --token "$DENO_DEPLOY_TOKEN" || true
         }
 
-        deno eval --ext=js "const data=JSON.parse(await Deno.readTextFile('env-vars.json')); for (const {key,value} of data) console.log(`${key}=${value}`);" |
-        while IFS= read -r line || [ -n "$line" ]; do
-          key="${line%%=*}"
-          value_b64="${line#*=}"
-
+        deno eval --ext=js "const data=JSON.parse(await Deno.readTextFile('env-vars.json')); for (const {key,value} of data) console.log(`${key}\t${value}`);" |
+        while IFS=$'\t' read -r key value_b64 || [ -n "$key" ]; do
           if [ -z "$key" ] || [ -z "$value_b64" ]; then
             continue
           fi

@@ -173,6 +173,7 @@ runs:
         cat deno.jsonc
         echo "env-vars.json present: $(test -f env-vars.json && echo 'yes' || echo 'no')"
         contexts=$([ "${{ inputs.production }}" = "true" ] && echo "Production" || echo "Preview")
+        echo "+++++++"
 
         if [ ! -f env-vars.json ]; then
           echo "No env-vars.json found; skipping env sync."

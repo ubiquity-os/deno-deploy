@@ -173,7 +173,6 @@ runs:
         cat deno.jsonc
         echo "env-vars.json present: $(test -f env-vars.json && echo 'yes' || echo 'no')"
         contexts=$([ "${{ inputs.production }}" = "true" ] && echo "Production" || echo "Preview")
-        echo "+++++++"
 
         if [ ! -f env-vars.json ]; then
           echo "No env-vars.json found; skipping env sync."
@@ -194,9 +193,11 @@ runs:
         }
 
         tmp_env_vars=$(mktemp)
+        echo "1.+++++++"
 
         deno eval --ext=js "const data=JSON.parse(await Deno.readTextFile('env-vars.json')); for (const {key,value} of data) console.log(`${key}\t${value}`);" > "$tmp_env_vars"
-
+        echo "2. +++++++"
+        
         while IFS=$'\t' read -r key value_b64; do
           if [ -z "$key" ] || [ -z "$value_b64" ]; then
             continue

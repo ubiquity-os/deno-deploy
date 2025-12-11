@@ -70,7 +70,7 @@ runs:
         echo "DENO_PROJECT_NAME=$new_name" >> $GITHUB_ENV
         DENO_DEPLOYMENT_ID=${{ github.sha }}
         echo "DENO_DEPLOYMENT_ID=$DENO_DEPLOYMENT_ID" >> $GITHUB_ENV
-        DENO_ORG=${{ toLower(inputs.organization || github.repository_owner) }}
+        DENO_ORG=${{ lower(inputs.organization || github.repository_owner) }}
         DENO_PROJECT_NAME=${{ inputs.organization }}
         if [ -z "$DENO_PROJECT_NAME" ]; then
           DENO_PROJECT_NAME=${GITHUB_REPOSITORY#*/}

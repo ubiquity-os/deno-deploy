@@ -141,7 +141,7 @@ runs:
       env:
         DENO_DEPLOY_TOKEN: ${{ inputs.token }}
       run: |
-        deno deploy env --org Meniole --app command-start-stop load .env
+        deno deploy env --org ${{ inputs.organization }} --app $DENO_PROJECT_NAME load .env
 #        deployctl deploy \
 #          --token=$DENO_DEPLOY_TOKEN \
 #          --project=$DENO_PROJECT_NAME \

@@ -89,13 +89,13 @@ runs:
           .filter(([k, v]) => !/^(GITHUB_|RUNNER_|CI|HOME|PATH|PWD|SHELL|LANG|LC_|TZ|ACTIONS_)/.test(k))
           .filter(([k, v]) => v !== undefined && v !== null && v.trim() !== "")
           .reduce((acc, [k,v]) => ({...acc, [k]:v}), {});
-        await Deno.writeTextFile(".env",
+        await Deno.writeTextFile(".env.preview",
           Object.entries(filtered)
             .map(([k,v]) => `${k}="${v.replace(/"/g, '\\"')}"`)
             .join("\n")
         );
         EOF
-        deno run --allow-env --allow-write=.env generate-env.ts
+        deno run --allow-env --allow-write=.env.preview generate-env.ts
         rm generate-env.ts
 
     - name: Create deno.jsonc
@@ -158,21 +158,13 @@ runs:
       if: inputs.action == 'deploy'
       shell: bash
       env:
-        RAW_TOKEN: ${{ inputs.token }}
+        DENO_DEPLOY_TOKEN: ${{ inputs.token }}
       run: |
-        # Trim whitespace/newlines from secret
-        DENO_DEPLOY_TOKEN="$(echo -n "$RAW_TOKEN" | tr -d '\n\r')"
-
-        # Debug
-        echo "Token length: ${#DENO_DEPLOY_TOKEN}"
-        echo "Org: $DENO_ORG"
-        echo "App: $DENO_PROJECT_NAME"
-
         deno deploy env \
           --token "$DENO_DEPLOY_TOKEN" \
           --org "$DENO_ORG" \
           --app "$DENO_PROJECT_NAME" \
-          load .env
+          load .env.preview
 #        deployctl deploy \
 #          --token=$DENO_DEPLOY_TOKEN \
 #          --project=$DENO_PROJECT_NAME \

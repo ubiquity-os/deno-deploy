@@ -37,9 +37,9 @@ runs:
       with:
         deno-version: v2.x
 
-#    - name: Install CLI
-#      shell: bash
-#      run: deno install -gArf jsr:@deno/deployctl
+    #    - name: Install CLI
+    #      shell: bash
+    #      run: deno install -gArf jsr:@deno/deployctl
 
     - name: Prepare Environment Variables
       shell: bash
@@ -118,18 +118,18 @@ runs:
         DENO_DEPLOY_TOKEN: ${{ inputs.token }}
       run: |
         deno deploy --token $DENO_DEPLOY_TOKEN --org $DENO_ORG --app $DENO_PROJECT_NAME || true
-#        deployctl projects create \
-#          --token=$DENO_DEPLOY_TOKEN \
-#          --project=$DENO_PROJECT_NAME \
-#          --force \
-#          --color=never \
-#          ${{ inputs.organization && format('--org={0}', inputs.organization) || '' }} || true
-#
-#        # Construct the deployment URL directly (Deno Deploy URLs follow predictable pattern)
-#        PROJECT_URL="https://${DENO_PROJECT_NAME}.deno.dev"
-#
-#        echo "PROJECT_URL=$PROJECT_URL" >> $GITHUB_ENV
-#        echo "deployment_url=$PROJECT_URL" >> $GITHUB_OUTPUT
+    #        deployctl projects create \
+    #          --token=$DENO_DEPLOY_TOKEN \
+    #          --project=$DENO_PROJECT_NAME \
+    #          --force \
+    #          --color=never \
+    #          ${{ inputs.organization && format('--org={0}', inputs.organization) || '' }} || true
+    #
+    #        # Construct the deployment URL directly (Deno Deploy URLs follow predictable pattern)
+    #        PROJECT_URL="https://${DENO_PROJECT_NAME}.deno.dev"
+    #
+    #        echo "PROJECT_URL=$PROJECT_URL" >> $GITHUB_ENV
+    #        echo "deployment_url=$PROJECT_URL" >> $GITHUB_OUTPUT
 
     - name: Update manifest.json with deployment URL
       if: inputs.action == 'deploy'
@@ -163,15 +163,48 @@ runs:
         echo "Will use the following deno.jsonc:"
         cat deno.jsonc
         echo ".env file present: $(test -f .env && echo 'yes' || echo 'no')"
-        contexts=$([ "${{ inputs.production }}" = "true" ] && echo "Production" || echo "Preview")
+        contexts=$([ "${{ inputs.production }}" = "true" ] && echo "production" || echo "preview")
+
+        apply_env_var() {
+          local key="$1"
+          local value="$2"
+
+          if [ -z "$key" ]; then
+            return
+          fi
+
+          deno deploy env delete "$key" --token "$DENO_DEPLOY_TOKEN" || true
+          deno deploy env add "$key" "$value" --token "$DENO_DEPLOY_TOKEN"
+          deno deploy env update-contexts "$key" $contexts --token "$DENO_DEPLOY_TOKEN"
+        }
+
+        in_multiline=0
+        current_key=""
+        current_value=""
 
         while IFS= read -r line || [ -n "$line" ]; do
+          line="${line%$'\r'}"
+
+          if [ $in_multiline -eq 1 ]; then
+            if [[ "$line" =~ (^.*[^\\]\")$ || "$line" == "\"" ]]; then
+              closing="${line%\"}"
+              current_value+=$'\n'"$closing"
+              value="${current_value//\\\"/\"}"
+              apply_env_var "$current_key" "$value"
+              in_multiline=0
+              current_key=""
+              current_value=""
+            else
+              current_value+=$'\n'"$line"
+            fi
+            continue
+          fi
+
           if [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]]; then
             continue
           fi
 
           if [[ "$line" != *=* ]]; then
-            echo "Skipping invalid line: $line"
             continue
           fi
 
@@ -179,21 +212,34 @@ runs:
           value="${line#*=}"
 
           key="$(echo "$key" | xargs)"
-          value="${value%$'\r'}"
-          value="${value#\"}"
-          value="${value%\"}"
-          value="${value//\\\"/\"}"
 
-          deno deploy env delete "$key" --token "$DENO_DEPLOY_TOKEN" || true
-          deno deploy env add "$key" "$value" --token "$DENO_DEPLOY_TOKEN"
-          deno deploy env update-contexts "$key" $contexts --token "$DENO_DEPLOY_TOKEN"
+          if [[ "$value" == \"* ]]; then
+            if [[ "$value" =~ ^\".*[^\\]\"$ || "$value" == "\"" ]]; then
+              value="${value#\"}"
+              value="${value%\"}"
+              value="${value//\\\"/\"}"
+              apply_env_var "$key" "$value"
+            else
+              in_multiline=1
+              current_key="$key"
+              current_value="${value#\"}"
+            fi
+          else
+            value="${value//\\\"/\"}"
+            apply_env_var "$key" "$value"
+          fi
         done < .env
-#        deployctl deploy \
-#          --token=$DENO_DEPLOY_TOKEN \
-#          --project=$DENO_PROJECT_NAME \
-#          --entrypoint=${{ inputs.entrypoint }} \
-#          ${{ inputs.generateEnv == 'true' && '--env-file=.env' || '' }} \
-#          ${{ inputs.production == 'true' && '--prod' || '' }}
+
+        if [ $in_multiline -eq 1 ]; then
+          value="${current_value//\\\"/\"}"
+          apply_env_var "$current_key" "$value"
+        fi
+    #        deployctl deploy \
+    #          --token=$DENO_DEPLOY_TOKEN \
+    #          --project=$DENO_PROJECT_NAME \
+    #          --entrypoint=${{ inputs.entrypoint }} \
+    #          ${{ inputs.generateEnv == 'true' && '--env-file=.env' || '' }} \
+    #          ${{ inputs.production == 'true' && '--prod' || '' }}
 
     - name: Get GitHub App token
       if: inputs.action == 'deploy' && env.APP_ID != '' && env.APP_PRIVATE_KEY != ''
@@ -239,6 +285,7 @@ runs:
         echo "${{ steps.deno_project.outputs.deployment_url }}" >> $GITHUB_STEP_SUMMARY
 
     # === DELETE STEP ===
+
 #    - name: Delete Deno Deploy Project
 #      if: inputs.action == 'delete'
 #      shell: bash

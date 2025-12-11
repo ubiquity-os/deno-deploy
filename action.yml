@@ -148,7 +148,19 @@ runs:
       env:
         DENO_DEPLOY_TOKEN: ${{ inputs.token }}
       run: |
-        deno deploy env --token $DENO_DEPLOY_TOKEN --org $DENO_ORG --app $DENO_PROJECT_NAME load .env
+        # Trim whitespace/newlines from secret
+        DENO_DEPLOY_TOKEN="$(echo -n "$RAW_TOKEN" | tr -d '\n\r')"
+
+        # Debug
+        echo "Token length: ${#DENO_DEPLOY_TOKEN}"
+        echo "Org: $DENO_ORG"
+        echo "App: $DENO_PROJECT_NAME"
+
+        deno deploy env \
+          --token "$DENO_DEPLOY_TOKEN" \
+          --org "$DENO_ORG" \
+          --app "$DENO_PROJECT_NAME" \
+          load .env
 #        deployctl deploy \
 #          --token=$DENO_DEPLOY_TOKEN \
 #          --project=$DENO_PROJECT_NAME \

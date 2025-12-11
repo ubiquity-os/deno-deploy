@@ -31,8 +31,6 @@ inputs:
 outputs: {}
 runs:
   using: "composite"
-  env:
-    DENO_DEPLOY_TOKEN: ${{ inputs.token }}
   steps:
     - name: Setup Deno
       uses: denoland/setup-deno@v2

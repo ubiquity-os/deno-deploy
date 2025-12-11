@@ -146,7 +146,7 @@ runs:
       if: inputs.action == 'deploy'
       shell: bash
       env:
-        DENO_DEPLOY_TOKEN: ${{ inputs.token }}
+        RAW_TOKEN: ${{ inputs.token }}
       run: |
         # Trim whitespace/newlines from secret
         DENO_DEPLOY_TOKEN="$(echo -n "$RAW_TOKEN" | tr -d '\n\r')"

@@ -86,10 +86,24 @@ runs:
         env_list="${{ inputs.envVars }}"
 
         cat > generate-env.ts <<'EOF'
-        const allow = (Deno.env.get("ENV_VARS") ?? "")
-          .split(/\s+/)
-          .map((s) => s.trim())
-          .filter(Boolean);
+        const defaults = [
+          "KERNEL_PUBLIC_KEY",
+          "SUPABASE_KEY",
+          "SUPABASE_URL",
+          "APP_ID",
+          "APP_PRIVATE_KEY",
+          "LOG_LEVEL",
+        ];
+
+        const allow = Array.from(
+          new Set([
+            ...defaults,
+            ...(Deno.env.get("ENV_VARS") ?? "")
+              .split(/\s+/)
+              .map((s) => s.trim())
+              .filter(Boolean),
+          ]),
+        );
 
         if (allow.length === 0) {
           console.log("No env vars specified; skipping env-vars.json generation.");
@@ -179,35 +193,50 @@ runs:
           exit 0
         fi
 
-        apply_env_var() {
-          local key="$1"
-          local value="$2"
+        cat > sync-env.ts <<'EOF'
+        const contexts = (Deno.env.get("CONTEXTS") ?? "")
+          .split(/\s+/)
+          .map((v) => v.trim())
+          .filter(Boolean);
 
-          if [ -z "$key" ]; then
-            return
-          fi
-
-          deno deploy env delete "$key" --token "$DENO_DEPLOY_TOKEN" || true
-          deno deploy env add "$key" "$value" --token "$DENO_DEPLOY_TOKEN" || true
-          deno deploy env update-contexts "$key" $contexts --token "$DENO_DEPLOY_TOKEN" || true
+        const token = Deno.env.get("DENO_DEPLOY_TOKEN") ?? "";
+        if (!token) {
+          console.error("Missing DENO_DEPLOY_TOKEN");
+          Deno.exit(1);
         }
 
-        tmp_env_vars=$(mktemp)
-        echo "1.+++++++"
+        const decode = (value: string) => {
+          const binary = atob(value);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+          return new TextDecoder().decode(bytes);
+        };
 
-        deno eval --ext=js 'const data=JSON.parse(await Deno.readTextFile("env-vars.json")); for (const {key,value} of data) console.log(`${key}\t${value}`);' > "$tmp_env_vars"
-        echo "2. +++++++"
-        
-        while IFS=$'\t' read -r key value_b64; do
-          if [ -z "$key" ] || [ -z "$value_b64" ]; then
-            continue
-          fi
+        const run = async (args: string[]) => {
+          const cmd = new Deno.Command("deno", { args, stdout: "piped", stderr: "piped" });
+          const result = await cmd.output();
+          const stdout = new TextDecoder().decode(result.stdout).trim();
+          const stderr = new TextDecoder().decode(result.stderr).trim();
+          if (stdout) console.log(stdout);
+          if (result.code !== 0) {
+            if (stderr) console.error(stderr);
+            Deno.exit(result.code);
+          }
+        };
 
-          value="$(printf '%s' "$value_b64" | base64 --decode)"
-          apply_env_var "$key" "$value"
-        done < "$tmp_env_vars"
+        const data = JSON.parse(await Deno.readTextFile("env-vars.json")) as { key: string; value: string }[];
 
-        rm -f "$tmp_env_vars"
+        for (const { key, value } of data) {
+          if (!key || !value) continue;
+          const decoded = decode(value);
+          await run(["deploy", "env", "delete", key, "--token", token]);
+          await run(["deploy", "env", "add", key, decoded, "--token", token]);
+          if (contexts.length) await run(["deploy", "env", "update-contexts", key, ...contexts, "--token", token]);
+        }
+        EOF
+
+        CONTEXTS="$contexts" DENO_DEPLOY_TOKEN="$DENO_DEPLOY_TOKEN" deno run --allow-all sync-env.ts
+        rm -f sync-env.ts
 
     - name: Get GitHub App token
       if: inputs.action == 'deploy' && env.APP_ID != '' && env.APP_PRIVATE_KEY != ''

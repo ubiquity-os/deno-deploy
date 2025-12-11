@@ -28,6 +28,10 @@ inputs:
   project_name:
     description: "Overrides the auto-generated Deno Deploy project name."
     required: false
+  envVars:
+    description: "Whitespace-separated list of environment variables to include in the generated env-vars file."
+    required: false
+    default: "KERNEL_PUBLIC_KEY SUPABASE_KEY SUPABASE_URL APP_ID APP_PRIVATE_KEY LOG_LEVEL"
 outputs: {}
 runs:
   using: "composite"
@@ -79,23 +83,44 @@ runs:
         echo "DENO_PROJECT_NAME=$DENO_PROJECT_NAME" >> $GITHUB_ENV
 
     # === DEPLOY STEPS ===
-    - name: Generate .env File
+    - name: Generate env vars file
       if: inputs.action == 'deploy' && inputs.generateEnv == 'true'
       shell: bash
       run: |
+        env_list="${{ inputs.envVars }}"
+
         cat > generate-env.ts <<'EOF'
+        const allow = (Deno.env.get("ENV_VARS") ?? "")
+          .split(/\s+/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+
+        if (allow.length === 0) {
+          console.log("No env vars specified; skipping env-vars.json generation.");
+          Deno.exit(0);
+        }
+
+        const toBase64 = (value: string) => {
+          const bytes = new TextEncoder().encode(value);
+          let binary = "";
+          for (const b of bytes) binary += String.fromCharCode(b);
+          return btoa(binary);
+        };
+
         const envVars = Deno.env.toObject();
-        const filtered = Object.entries(envVars)
-          .filter(([k, v]) => !/^(GITHUB_|RUNNER_|CI|HOME|PATH|PWD|SHELL|LANG|LC_|TZ|ACTIONS_)/.test(k))
-          .filter(([k, v]) => v !== undefined && v !== null && v.trim() !== "")
-          .reduce((acc, [k,v]) => ({...acc, [k]:v}), {});
-        await Deno.writeTextFile(".env",
-          Object.entries(filtered)
-            .map(([k,v]) => `${k}="${v.replace(/"/g, '\\"')}"`)
-            .join("\n")
-        );
+        const entries = allow
+          .map((k) => ({ key: k, value: envVars[k] }))
+          .filter(({ value }) => value !== undefined && value !== null && `${value}`.trim() !== "")
+          .map(({ key, value }) => ({ key, value: toBase64(String(value)) }));
+
+        if (entries.length === 0) {
+          console.log("No matching env vars found; skipping env-vars.json generation.");
+          Deno.exit(0);
+        }
+
+        await Deno.writeTextFile("env-vars.json", JSON.stringify(entries));
         EOF
-        deno run --allow-env --allow-write=.env generate-env.ts
+        ENV_VARS="$env_list" deno run --allow-env --allow-write=env-vars.json generate-env.ts
         rm generate-env.ts
 
     - name: Create deno.jsonc
@@ -162,8 +187,13 @@ runs:
       run: |
         echo "Will use the following deno.jsonc:"
         cat deno.jsonc
-        echo ".env file present: $(test -f .env && echo 'yes' || echo 'no')"
-        contexts=$([ "${{ inputs.production }}" = "true" ] && echo "Production" || echo "Preview")
+        echo "env-vars.json present: $(test -f env-vars.json && echo 'yes' || echo 'no')"
+        contexts=$([ "${{ inputs.production }}" = "true" ] && echo "production" || echo "preview")
+
+        if [ ! -f env-vars.json ]; then
+          echo "No env-vars.json found; skipping env sync."
+          exit 0
+        fi
 
         apply_env_var() {
           local key="$1"
@@ -178,62 +208,18 @@ runs:
           deno deploy env update-contexts "$key" $contexts --token "$DENO_DEPLOY_TOKEN" || true
         }
 
-        in_multiline=0
-        current_key=""
-        current_value=""
-
+        deno eval --ext=js "const data=JSON.parse(await Deno.readTextFile('env-vars.json')); for (const {key,value} of data) console.log(`${key}=${value}`);" |
         while IFS= read -r line || [ -n "$line" ]; do
-          line="${line%$'\r'}"
-
-          if [ $in_multiline -eq 1 ]; then
-            if [[ "$line" =~ (^.*[^\\]\")$ || "$line" == "\"" ]]; then
-              closing="${line%\"}"
-              current_value+=$'\n'"$closing"
-              value="${current_value//\\\"/\"}"
-              apply_env_var "$current_key" "$value"
-              in_multiline=0
-              current_key=""
-              current_value=""
-            else
-              current_value+=$'\n'"$line"
-            fi
-            continue
-          fi
-
-          if [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]]; then
-            continue
-          fi
-
-          if [[ "$line" != *=* ]]; then
-            continue
-          fi
-
           key="${line%%=*}"
-          value="${line#*=}"
+          value_b64="${line#*=}"
 
-          key="$(echo "$key" | xargs)"
-
-          if [[ "$value" == \"* ]]; then
-            if [[ "$value" =~ ^\".*[^\\]\"$ || "$value" == "\"" ]]; then
-              value="${value#\"}"
-              value="${value%\"}"
-              value="${value//\\\"/\"}"
-              apply_env_var "$key" "$value"
-            else
-              in_multiline=1
-              current_key="$key"
-              current_value="${value#\"}"
-            fi
-          else
-            value="${value//\\\"/\"}"
-            apply_env_var "$key" "$value"
+          if [ -z "$key" ] || [ -z "$value_b64" ]; then
+            continue
           fi
-        done < .env
 
-        if [ $in_multiline -eq 1 ]; then
-          value="${current_value//\\\"/\"}"
-          apply_env_var "$current_key" "$value"
-        fi
+          value="$(printf '%s' "$value_b64" | base64 --decode)"
+          apply_env_var "$key" "$value"
+        done
     #        deployctl deploy \
     #          --token=$DENO_DEPLOY_TOKEN \
     #          --project=$DENO_PROJECT_NAME \

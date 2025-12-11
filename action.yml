@@ -160,11 +160,7 @@ runs:
       env:
         DENO_DEPLOY_TOKEN: ${{ inputs.token }}
       run: |
-        deno deploy env \
-          --token "$DENO_DEPLOY_TOKEN" \
-          --org "$DENO_ORG" \
-          --app "$DENO_PROJECT_NAME" \
-          load .env
+        deno deploy env --token "$DENO_DEPLOY_TOKEN" load .env
 #        deployctl deploy \
 #          --token=$DENO_DEPLOY_TOKEN \
 #          --project=$DENO_PROJECT_NAME \

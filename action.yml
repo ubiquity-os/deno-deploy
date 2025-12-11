@@ -195,9 +195,9 @@ runs:
         tmp_env_vars=$(mktemp)
         echo "1.+++++++"
 
-        deno eval --ext=js "const data=JSON.parse(await Deno.readTextFile('env-vars.json')); for (const {key,value} of data) console.log(`${key}\t${value}`);" > "$tmp_env_vars"
+        deno eval --allow-read=env-vars.json --ext=js "const data=JSON.parse(await Deno.readTextFile('env-vars.json')); for (const {key,value} of data) console.log(`${key}\t${value}`);" > "$tmp_env_vars"
         echo "2. +++++++"
-        
+
         while IFS=$'\t' read -r key value_b64; do
           if [ -z "$key" ] || [ -z "$value_b64" ]; then
             continue

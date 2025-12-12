@@ -200,8 +200,14 @@ runs:
           .filter(Boolean);
 
         const token = Deno.env.get("DENO_DEPLOY_TOKEN") ?? "";
+        const org = Deno.env.get("DENO_ORG") ?? "";
+        const app = Deno.env.get("DENO_PROJECT_NAME") ?? "";
         if (!token) {
           console.error("Missing DENO_DEPLOY_TOKEN");
+          Deno.exit(1);
+        }
+        if (!app) {
+          console.error("Missing DENO_PROJECT_NAME");
           Deno.exit(1);
         }
 
@@ -211,6 +217,8 @@ runs:
           for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
           return new TextDecoder().decode(bytes);
         };
+
+        const baseArgs = ["--token", token, ...(org ? ["--org", org] : []), "--app", app];
 
         const run = async (args: string[]) => {
           const cmd = new Deno.Command("deno", { args, stdout: "piped", stderr: "piped" });
@@ -228,13 +236,13 @@ runs:
         for (const { key, value } of data) {
           if (!key || !value) continue;
           const decoded = decode(value);
-          await run(["deploy", "env", "delete", key, "--token", token]);
-          await run(["deploy", "env", "add", key, decoded, "--token", token]);
-          if (contexts.length) await run(["deploy", "env", "update-contexts", key, ...contexts, "--token", token]);
+          await run(["deploy", "env", "delete", key, ...baseArgs]);
+          await run(["deploy", "env", "add", key, ...baseArgs, "--", decoded]);
+          if (contexts.length) await run(["deploy", "env", "update-contexts", key, ...contexts, ...baseArgs]);
         }
         EOF
 
-        CONTEXTS="$contexts" DENO_DEPLOY_TOKEN="$DENO_DEPLOY_TOKEN" deno run --allow-all sync-env.ts
+        CONTEXTS="$contexts" DENO_DEPLOY_TOKEN="$DENO_DEPLOY_TOKEN" DENO_ORG="$DENO_ORG" DENO_PROJECT_NAME="$DENO_PROJECT_NAME" deno run --allow-all sync-env.ts
         rm -f sync-env.ts
 
     - name: Get GitHub App token

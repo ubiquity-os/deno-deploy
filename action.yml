@@ -220,7 +220,6 @@ runs:
           if (stdout) console.log(stdout);
           if (result.code !== 0) {
             if (stderr) console.error(stderr);
-            Deno.exit(result.code);
           }
         };
 

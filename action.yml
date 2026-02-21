@@ -359,5 +359,5 @@ runs:
       if: inputs.action == 'delete'
       shell: bash
       run: |
-        echo "### Deployment URL" >> $GITHUB_STEP_SUMMARY
+        echo "### Deletion Summary" >> $GITHUB_STEP_SUMMARY
         echo "Deployment \`${DENO_PROJECT_NAME}\` and artifact branch \`${ARTIFACT_REF}\` have been deleted." >> $GITHUB_STEP_SUMMARY

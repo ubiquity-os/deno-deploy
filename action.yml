@@ -259,13 +259,21 @@ runs:
                 throw error;
               }
               const baseSha = await resolveBaseSha();
-              await github.rest.git.createRef({
-                owner,
-                repo,
-                ref: `refs/${artifactBranchRef}`,
-                sha: baseSha,
-              });
-              core.notice(`Created artifact branch '${artifactRef}'.`);
+              try {
+                await github.rest.git.createRef({
+                  owner,
+                  repo,
+                  ref: `refs/${artifactBranchRef}`,
+                  sha: baseSha,
+                });
+                core.notice(`Created artifact branch '${artifactRef}'.`);
+              } catch (createError) {
+                if (createError.status === 422) {
+                  core.info(`Artifact branch '${artifactRef}' was created concurrently.`);
+                  return;
+                }
+                throw createError;
+              }
             }
           }
 

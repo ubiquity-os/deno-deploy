@@ -51,14 +51,17 @@ runs:
 
     - name: Resolve source and artifact refs
       shell: bash
+      env:
+        SOURCE_REF_INPUT: ${{ inputs.sourceRef }}
+        ARTIFACT_PREFIX_INPUT: ${{ inputs.artifactPrefix }}
       run: |
-        source_ref="${{ inputs.sourceRef }}"
+        source_ref="$SOURCE_REF_INPUT"
         source_ref="${source_ref#refs/heads/}"
         if [ -z "$source_ref" ]; then
           source_ref="${GITHUB_REF_NAME}"
         fi
 
-        artifact_prefix="${{ inputs.artifactPrefix }}"
+        artifact_prefix="$ARTIFACT_PREFIX_INPUT"
         if [ -z "$artifact_prefix" ]; then
           artifact_prefix="dist/"
         fi

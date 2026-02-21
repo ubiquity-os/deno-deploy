@@ -1,17 +1,32 @@
 # deno-deploy
 
-Deploys a plugin to Deno, and deletes it if the related branch is deleted.
+Deploys a plugin to Deno and keeps generated `manifest.json` updates on paired artifact branches.
+
+## Artifact branch model
+
+- Source branch `R` maps to artifact branch `dist/R`.
+- If `R` already starts with `dist/`, it is used as-is.
+- On `deploy`, this action updates `homepage_url` and publishes `manifest.json` to the artifact branch root.
+- On `delete`, this action deletes both the Deno project and the paired artifact branch.
+- Source branches no longer receive generated manifest commits.
 
 ## Requirements
 
-- your plugin should be written for ESM
-- imports should not be shortened (e.g. `./myFolder` containing `index.ts` should be written as `./myFolder/index`)
-- there should be an entry point for `fetch`, exported as a default
-- `node` imports have to be explicit, e.g. `import { Buffer } from 'node:buffer'` if you want to use `Buffer` otherwise the plugin will crash during runtime
+- Your plugin should be written for ESM.
+- Imports should not be shortened (for example `./myFolder/index` instead of `./myFolder`).
+- There should be an entrypoint for `fetch`, exported as default.
+- Node imports must be explicit (for example `import { Buffer } from "node:buffer"`).
+
+## Key inputs
+
+- `action`: `deploy` or `delete`.
+- `token`: Deno Deploy token.
+- `entrypoint`: Entrypoint file to deploy.
+- `project_name`: Optional override for the generated Deno project name.
+- `sourceRef`: Source branch ref used for deterministic project naming and artifact-branch mapping.
+- `artifactPrefix`: Artifact branch prefix (default `dist/`).
 
 ## Example
-
-Here is a valid Action that would compile and publish to Deno.
 
 ```yaml
 name: Deno Deploy
@@ -24,21 +39,20 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    name: Deploy
-    environment: ${{ (github.event.ref == 'refs/heads/main' || github.ref == 'refs/heads/main' || github.event.workflow_run.head_branch == 'main') && 'main' || 'development' }}
     permissions:
       contents: write
-      # Required from Deno CLI to be able to publish the project to your account
       id-token: write
 
     steps:
+      - uses: actions/checkout@v5
+
       - uses: ubiquity-os/deno-deploy@main
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Add all the environment variables required by your plugin here
           KERNEL_PUBLIC_KEY: ${{ secrets.KERNEL_PUBLIC_KEY }}
         with:
-          # Get this token from the Deno dashboard
           token: ${{ secrets.DENO_DEPLOY_TOKEN }}
           action: ${{ github.event_name == 'delete' && 'delete' || 'deploy' }}
+          sourceRef: ${{ github.event.ref || github.event.workflow_run.head_branch || github.ref_name }}
+          artifactPrefix: dist/
 ```

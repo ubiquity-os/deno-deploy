@@ -57,6 +57,7 @@ runs:
       run: |
         source_ref="$SOURCE_REF_INPUT"
         source_ref="${source_ref#refs/heads/}"
+        source_ref="${source_ref#refs/tags/}"
         if [ -z "$source_ref" ]; then
           source_ref="${GITHUB_REF_NAME}"
         fi

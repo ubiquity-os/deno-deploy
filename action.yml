@@ -49,13 +49,23 @@ runs:
           new_name="${project_name}-${branch_name}"
         fi
 
-        # Clean up the name to meet Deno Deploy requirements:
+        # Clean up base name to meet Deno Deploy requirements:
         # - Only a-z, 0-9, and - allowed
         # - Must not start or end with hyphen
-        # - Cannot exceed 26 characters
-        new_name=$(echo "$new_name" | tr '[:upper:]' '[:lower:]' | sed 's#[^a-z0-9-]#-#g' | sed 's#^-*##' | sed 's#-*$##' | cut -c 1-26)
+        cleaned_name=$(echo "$new_name" | tr '[:upper:]' '[:lower:]' | sed 's#[^a-z0-9-]#-#g' | sed 's#^-*##' | sed 's#-*$##')
 
-        # Ensure we don't end with a hyphen after truncation
+        # For auto-generated names, preserve branch uniqueness within 26 chars.
+        if [ -z "${{ inputs.project_name }}" ]; then
+          hash_suffix=$(printf '%s' "$cleaned_name" | sha256sum | cut -c1-6)
+          base=$(echo "$cleaned_name" | cut -c1-19 | sed 's#-*$##')
+          [ -z "$base" ] && base="app"
+          new_name="${base}-${hash_suffix}"
+        else
+          # User-provided project name override: sanitize and truncate only.
+          new_name=$(echo "$cleaned_name" | cut -c 1-26)
+        fi
+
+        # Ensure we don't end with a hyphen after truncation/compose
         new_name=$(echo "$new_name" | sed 's#-*$##')
 
         # Ensure minimum length of 3 characters
@@ -135,9 +145,15 @@ runs:
           context="Development"
         fi
 
+        failed=0
         while IFS= read -r key; do
-          deno deploy env update-contexts "$key" "$context" --org "$DENO_ORG" --app "$DENO_PROJECT_NAME" || true
+          if ! deno deploy env update-contexts "$key" "$context" --org "$DENO_ORG" --app "$DENO_PROJECT_NAME"; then
+            echo "Failed to update context for $key"
+            failed=1
+          fi
         done < <(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' .env | cut -d '=' -f 1)
+
+        [ "$failed" -eq 0 ]
 
     - name: Deploy to Deno
       if: inputs.action == 'deploy'
@@ -146,7 +162,7 @@ runs:
       env:
         DENO_DEPLOY_TOKEN: ${{ inputs.token }}
       run: |
-        deploy_cmd=(deno deploy --org "$DENO_ORG" --app "$DENO_PROJECT_NAME")
+        deploy_cmd=(deno deploy --org "$DENO_ORG" --app "$DENO_PROJECT_NAME" --entrypoint "${{ inputs.entrypoint }}")
         if [ "${{ inputs.production }}" = "true" ]; then
           deploy_cmd+=(--prod)
         fi

@@ -28,7 +28,14 @@ inputs:
   project_name:
     description: "Overrides the auto-generated Deno Deploy project name."
     required: false
-outputs: {}
+  env_keys:
+    description: "Comma-separated env var keys to sync to Deno Deploy when generateEnv=true."
+    required: false
+    default: ""
+outputs:
+  deployment_url:
+    description: "The URL of the deployed project"
+    value: ${{ steps.deno_deploy.outputs.deployment_url }}
 runs:
   using: "composite"
   steps:
@@ -87,13 +94,25 @@ runs:
     - name: Generate .env File
       if: inputs.action == 'deploy' && inputs.generateEnv == 'true'
       shell: bash
+      env:
+        DENO_DEPLOY_ENV_KEYS: ${{ inputs.env_keys }}
       run: |
         cat > generate-env.ts <<'EOF'
         const envVars = Deno.env.toObject();
-        const filtered = Object.entries(envVars)
-          .filter(([k]) => !/^(GITHUB_|RUNNER_|CI|HOME|PATH|PWD|SHELL|LANG|LC_|TZ|ACTIONS_)/.test(k))
-          .filter(([, v]) => v !== undefined && v !== null && v.trim() !== "")
-          .reduce((acc, [k, v]) => ({ ...acc, [k]: v }), {});
+        const allow = (Deno.env.get("DENO_DEPLOY_ENV_KEYS") ?? "")
+          .split(",")
+          .map((k) => k.trim())
+          .filter(Boolean);
+
+        if (allow.length === 0) {
+          throw new Error("DENO_DEPLOY_ENV_KEYS must contain comma-separated env keys to sync");
+        }
+
+        const filtered = Object.fromEntries(
+          allow
+            .map((k) => [k, envVars[k]])
+            .filter(([, v]) => typeof v === "string" && v.trim() !== ""),
+        );
 
         await Deno.writeTextFile(
           ".env",
@@ -190,6 +209,8 @@ runs:
     - name: Update manifest.json with deployment URL
       if: inputs.action == 'deploy'
       uses: actions/github-script@v7
+      env:
+        DEPLOYMENT_URL: ${{ steps.deno_deploy.outputs.deployment_url }}
       with:
         script: |
           const fs = require('fs');
@@ -204,7 +225,7 @@ runs:
 
           const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
 
-          manifest["homepage_url"] = "${{ steps.deno_deploy.outputs.deployment_url }}";
+          manifest["homepage_url"] = process.env.DEPLOYMENT_URL;
 
           const updatedManifest = JSON.stringify(manifest, null, 2);
           fs.writeFileSync(manifestPath, updatedManifest);

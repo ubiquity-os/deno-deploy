@@ -1,8 +1,11 @@
 # deno-deploy
 
-Deploys a plugin to Deno, and deletes it if the related branch is deleted.
+Deploys a plugin to Deno Deploy (console.deno.com), and deletes it if the related branch is deleted.
 
 ## Requirements
+
+- provide `DENO_DEPLOY_TOKEN` via workflow secret (`with.token`)
+- optionally set `with.organization` to target a specific Deno org; defaults to the GitHub repo owner
 
 - your plugin should be written for ESM
 - imports should not be shortened (e.g. `./myFolder` containing `index.ts` should be written as `./myFolder/index`)

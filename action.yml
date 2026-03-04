@@ -11,7 +11,7 @@ inputs:
     description: "Deno token for publishing."
     required: true
   organization:
-    description: The organization to target when deploying the project. If omitted, will default to the user account.
+    description: The organization to target when deploying the project. If omitted, will default to the repository owner.
     required: false
   production:
     description: "Deploy to production (uses --prod flag)"
@@ -37,10 +37,6 @@ runs:
       with:
         deno-version: v2.x
 
-    - name: Install CLI
-      shell: bash
-      run: deno install -gArf jsr:@deno/deployctl
-
     - name: Prepare Environment Variables
       shell: bash
       run: |
@@ -57,7 +53,7 @@ runs:
         # - Only a-z, 0-9, and - allowed
         # - Must not start or end with hyphen
         # - Cannot exceed 26 characters
-        new_name=$(echo "$new_name" | sed 's#[^a-zA-Z0-9-]#-#g' | sed 's#^-*##' | sed 's#-*$##' | cut -c 1-26)
+        new_name=$(echo "$new_name" | tr '[:upper:]' '[:lower:]' | sed 's#[^a-z0-9-]#-#g' | sed 's#^-*##' | sed 's#-*$##' | cut -c 1-26)
 
         # Ensure we don't end with a hyphen after truncation
         new_name=$(echo "$new_name" | sed 's#-*$##')
@@ -67,9 +63,15 @@ runs:
           new_name="${new_name}app"
         fi
 
-        echo "DENO_PROJECT_NAME=$new_name" >> $GITHUB_ENV
-        DENO_DEPLOYMENT_ID=${{ github.sha }}
-        echo "DENO_DEPLOYMENT_ID=$DENO_DEPLOYMENT_ID" >> $GITHUB_ENV
+        if [ -n "${{ inputs.organization }}" ]; then
+          deno_org=$(echo "${{ inputs.organization }}" | tr '[:upper:]' '[:lower:]')
+        else
+          deno_org=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+        fi
+
+        echo "DENO_ORG=$deno_org" >> "$GITHUB_ENV"
+        echo "DENO_PROJECT_NAME=$new_name" >> "$GITHUB_ENV"
+        echo "DENO_DEPLOYMENT_ID=${{ github.sha }}" >> "$GITHUB_ENV"
 
     # === DEPLOY STEPS ===
     - name: Generate .env File
@@ -79,37 +81,95 @@ runs:
         cat > generate-env.ts <<'EOF'
         const envVars = Deno.env.toObject();
         const filtered = Object.entries(envVars)
-          .filter(([k, v]) => !/^(GITHUB_|RUNNER_|CI|HOME|PATH|PWD|SHELL|LANG|LC_|TZ|ACTIONS_)/.test(k))
-          .filter(([k, v]) => v !== undefined && v !== null && v.trim() !== "")
-          .reduce((acc, [k,v]) => ({...acc, [k]:v}), {});
-        await Deno.writeTextFile(".env",
+          .filter(([k]) => !/^(GITHUB_|RUNNER_|CI|HOME|PATH|PWD|SHELL|LANG|LC_|TZ|ACTIONS_)/.test(k))
+          .filter(([, v]) => v !== undefined && v !== null && v.trim() !== "")
+          .reduce((acc, [k, v]) => ({ ...acc, [k]: v }), {});
+
+        await Deno.writeTextFile(
+          ".env",
           Object.entries(filtered)
-            .map(([k,v]) => `${k}="${v.replace(/"/g, '\\"')}"`)
-            .join("\n")
+            .map(([k, v]) => `${k}="${v.replace(/"/g, '\\"')}"`)
+            .join("\n"),
         );
         EOF
         deno run --allow-env --allow-write=.env generate-env.ts
-        rm generate-env.ts
+        rm -f generate-env.ts
 
-    - name: Manage Deno Deploy Project (Deploy)
+    - name: Ensure Deno Deploy app exists
       if: inputs.action == 'deploy'
       shell: bash
-      id: deno_project
       env:
         DENO_DEPLOY_TOKEN: ${{ inputs.token }}
       run: |
-        deployctl projects create \
-          --token=$DENO_DEPLOY_TOKEN \
-          --project=$DENO_PROJECT_NAME \
-          --force \
-          --color=never \
-          ${{ inputs.organization && format('--org={0}', inputs.organization) || '' }} || true
+        deno deploy create \
+          --org "$DENO_ORG" \
+          --app "$DENO_PROJECT_NAME" \
+          --source local \
+          --runtime-mode dynamic \
+          --entrypoint "${{ inputs.entrypoint }}" \
+          --build-timeout 10 \
+          --build-memory-limit 1024 \
+          --region global \
+          --no-wait || true
 
-        # Construct the deployment URL directly (Deno Deploy URLs follow predictable pattern)
         PROJECT_URL="https://${DENO_PROJECT_NAME}.deno.dev"
+        echo "PROJECT_URL=$PROJECT_URL" >> "$GITHUB_ENV"
+        echo "deployment_url=$PROJECT_URL" >> "$GITHUB_OUTPUT"
 
-        echo "PROJECT_URL=$PROJECT_URL" >> $GITHUB_ENV
-        echo "deployment_url=$PROJECT_URL" >> $GITHUB_OUTPUT
+    - name: Sync environment variables to Deno Deploy
+      if: inputs.action == 'deploy' && inputs.generateEnv == 'true'
+      shell: bash
+      env:
+        DENO_DEPLOY_TOKEN: ${{ inputs.token }}
+      run: |
+        if [ ! -s .env ]; then
+          echo "No .env values found; skipping env sync"
+          exit 0
+        fi
+
+        deno deploy env load .env --org "$DENO_ORG" --app "$DENO_PROJECT_NAME"
+
+        if [ "${{ inputs.production }}" = "true" ]; then
+          context="Production"
+        else
+          context="Development"
+        fi
+
+        while IFS= read -r key; do
+          deno deploy env update-contexts "$key" "$context" --org "$DENO_ORG" --app "$DENO_PROJECT_NAME" || true
+        done < <(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' .env | cut -d '=' -f 1)
+
+    - name: Deploy to Deno
+      if: inputs.action == 'deploy'
+      shell: bash
+      id: deno_deploy
+      env:
+        DENO_DEPLOY_TOKEN: ${{ inputs.token }}
+      run: |
+        deploy_cmd=(deno deploy --org "$DENO_ORG" --app "$DENO_PROJECT_NAME")
+        if [ "${{ inputs.production }}" = "true" ]; then
+          deploy_cmd+=(--prod)
+        fi
+
+        set +e
+        deploy_output=$("${deploy_cmd[@]}" 2>&1)
+        deploy_status=$?
+        set -e
+
+        echo "$deploy_output"
+
+        deployment_url=$(echo "$deploy_output" | grep -Eo 'https://[^ ]+' | head -n 1 | tr -d '\r')
+        if [ -z "$deployment_url" ]; then
+          deployment_url="$PROJECT_URL"
+        fi
+
+        echo "PROJECT_URL=$deployment_url" >> "$GITHUB_ENV"
+        echo "deployment_url=$deployment_url" >> "$GITHUB_OUTPUT"
+
+        if [ $deploy_status -ne 0 ]; then
+          echo "Deno Deploy command failed"
+          exit $deploy_status
+        fi
 
     - name: Update manifest.json with deployment URL
       if: inputs.action == 'deploy'
@@ -128,24 +188,11 @@ runs:
 
           const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
 
-          manifest["homepage_url"] = "${{ steps.deno_project.outputs.deployment_url }}";
+          manifest["homepage_url"] = "${{ steps.deno_deploy.outputs.deployment_url }}";
 
           const updatedManifest = JSON.stringify(manifest, null, 2);
           fs.writeFileSync(manifestPath, updatedManifest);
           console.log('Updated manifest:', updatedManifest);
-
-    - name: Deploy to Deno
-      if: inputs.action == 'deploy'
-      shell: bash
-      env:
-        DENO_DEPLOY_TOKEN: ${{ inputs.token }}
-      run: |
-        deployctl deploy \
-          --token=$DENO_DEPLOY_TOKEN \
-          --project=$DENO_PROJECT_NAME \
-          --entrypoint=${{ inputs.entrypoint }} \
-          ${{ inputs.generateEnv == 'true' && '--env-file=.env' || '' }} \
-          ${{ inputs.production == 'true' && '--prod' || '' }}
 
     - name: Get GitHub App token
       if: inputs.action == 'deploy' && env.APP_ID != '' && env.APP_PRIVATE_KEY != ''
@@ -188,7 +235,7 @@ runs:
       shell: bash
       run: |
         echo "### Deployment URL" >> $GITHUB_STEP_SUMMARY
-        echo "${{ steps.deno_project.outputs.deployment_url }}" >> $GITHUB_STEP_SUMMARY
+        echo "${{ steps.deno_deploy.outputs.deployment_url }}" >> $GITHUB_STEP_SUMMARY
 
     # === DELETE STEP ===
     - name: Delete Deno Deploy Project
@@ -197,6 +244,9 @@ runs:
       env:
         DENO_DEPLOY_TOKEN: ${{ inputs.token }}
       run: |
+        # App deletion is not yet generally available in the new CLI.
+        # Keep classic fallback so branch delete workflows remain functional.
+        deno install -gArf jsr:@deno/deployctl
         deployctl projects delete \
           --token=$DENO_DEPLOY_TOKEN \
           --project=$DENO_PROJECT_NAME \

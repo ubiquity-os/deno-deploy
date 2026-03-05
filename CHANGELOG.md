@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.6.0](https://github.com/ubiquity-os/deno-deploy/compare/v1.5.0...v1.6.0) (2026-03-05)
+
+
+### Features
+
+* migrate deno deploy manifest updates to artifact branches ([95d742a](https://github.com/ubiquity-os/deno-deploy/commit/95d742a6f9fdfbb007bf163f61ece5f435f448bb))
+* move deno-deploy manifest updates to artifact branches ([2b5a895](https://github.com/ubiquity-os/deno-deploy/commit/2b5a895115b4b06e4d17ce5fe04b77a333289cff))
+
 ## [1.5.0](https://github.com/ubiquity-os/deno-deploy/compare/v1.4.0...v1.5.0) (2025-11-02)
 
 

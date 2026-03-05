@@ -23,7 +23,7 @@ Deploys a plugin to Deno and keeps generated `manifest.json` updates on paired a
 - `token`: Deno Deploy token.
 - `entrypoint`: Entrypoint file to deploy.
 - `project_name`: Optional override for the generated Deno project name.
-- `sourceRef`: Source branch ref used for deterministic project naming and artifact-branch mapping.
+- `sourceRef`: Source branch ref used for deterministic project naming and artifact-branch mapping (defaults to delete-aware branch resolution).
 - `artifactPrefix`: Artifact branch prefix (default `dist/`).
 
 ## Example
@@ -53,6 +53,4 @@ jobs:
         with:
           token: ${{ secrets.DENO_DEPLOY_TOKEN }}
           action: ${{ github.event_name == 'delete' && 'delete' || 'deploy' }}
-          sourceRef: ${{ github.event.ref || github.event.workflow_run.head_branch || github.ref_name }}
-          artifactPrefix: dist/
 ```

@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.6.2](https://github.com/ubiquity-os/deno-deploy/compare/v1.6.1...v1.6.2) (2026-03-05)
+
+
+### Bug Fixes
+
+* do not fail delete when artifact branch is already absent ([59c61b5](https://github.com/ubiquity-os/deno-deploy/commit/59c61b53d7128d2dc8b436da3e1e2beebfd9a87a))
+* tolerate missing artifact branch during delete ([667afa4](https://github.com/ubiquity-os/deno-deploy/commit/667afa4abaa42b3d013605fe01bf26fc6e13a150))
+
 ## [1.6.1](https://github.com/ubiquity-os/deno-deploy/compare/v1.6.0...v1.6.1) (2026-03-05)
 
 

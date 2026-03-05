@@ -28,6 +28,14 @@ inputs:
   project_name:
     description: "Overrides the auto-generated Deno Deploy project name."
     required: false
+  sourceRef:
+    description: "Source branch ref used for deterministic project naming and artifact branch mapping."
+    required: false
+    default: "${{ github.event.ref || github.event.workflow_run.head_branch || github.ref_name }}"
+  artifactPrefix:
+    description: "Prefix used for paired artifact branches."
+    required: false
+    default: "dist/"
 outputs: {}
 runs:
   using: "composite"
@@ -41,6 +49,36 @@ runs:
       shell: bash
       run: deno install -gArf jsr:@deno/deployctl
 
+    - name: Resolve source and artifact refs
+      shell: bash
+      env:
+        SOURCE_REF_INPUT: ${{ inputs.sourceRef }}
+        ARTIFACT_PREFIX_INPUT: ${{ inputs.artifactPrefix }}
+      run: |
+        source_ref="$SOURCE_REF_INPUT"
+        source_ref="${source_ref#refs/heads/}"
+        source_ref="${source_ref#refs/tags/}"
+        if [ -z "$source_ref" ]; then
+          source_ref="${GITHUB_REF_NAME}"
+        fi
+
+        artifact_prefix="$ARTIFACT_PREFIX_INPUT"
+        if [ -z "$artifact_prefix" ]; then
+          artifact_prefix="dist/"
+        fi
+        if [[ "$artifact_prefix" != */ ]]; then
+          artifact_prefix="${artifact_prefix}/"
+        fi
+
+        if [[ "$source_ref" == "$artifact_prefix"* ]]; then
+          artifact_ref="$source_ref"
+        else
+          artifact_ref="${artifact_prefix}${source_ref}"
+        fi
+
+        echo "SOURCE_REF=$source_ref" >> "$GITHUB_ENV"
+        echo "ARTIFACT_REF=$artifact_ref" >> "$GITHUB_ENV"
+
     - name: Prepare Environment Variables
       shell: bash
       run: |
@@ -49,7 +87,7 @@ runs:
         else
           # Sanitize both project name and branch name to meet Deno Deploy requirements
           project_name=$(echo "${{ github.event.repository.name }}" | sed 's#[^a-zA-Z0-9]#-#g')
-          branch_name=$(echo '${{ github.event.ref || github.event.workflow_run.head_branch || github.ref }}' | sed 's#refs/heads/##' | sed 's#[^a-zA-Z0-9]#-#g')
+          branch_name=$(echo "$SOURCE_REF" | sed 's#[^a-zA-Z0-9]#-#g')
           new_name="${project_name}-${branch_name}"
         fi
 
@@ -148,7 +186,7 @@ runs:
           ${{ inputs.production == 'true' && '--prod' || '' }}
 
     - name: Get GitHub App token
-      if: inputs.action == 'deploy' && env.APP_ID != '' && env.APP_PRIVATE_KEY != ''
+      if: env.APP_ID != '' && env.APP_PRIVATE_KEY != ''
       uses: actions/create-github-app-token@v1
       id: app-token
       with:
@@ -157,6 +195,7 @@ runs:
 
     - name: Check if manifest.json exists
       id: check_manifest
+      if: inputs.action == 'deploy'
       shell: bash
       run: |
         if [ -f manifest.json ]; then
@@ -172,16 +211,115 @@ runs:
       run: |
         npx prettier --write manifest.json
 
-    - name: Commit file
+    - name: Publish manifest.json to artifact branch
       if: inputs.action == 'deploy' && steps.check_manifest.outputs.exists == 'true'
-      uses: swinton/commit@v2.x
-      env:
-        GH_TOKEN: ${{ steps.app-token.outputs.token || env.GITHUB_TOKEN }}
+      uses: actions/github-script@v7
       with:
-        files: |
-          manifest.json
-        commit-message: "chore: [skip ci] update manifest.json url"
-        ref: ${{ github.event.workflow_run.head_branch || github.ref }}
+        github-token: ${{ steps.app-token.outputs.token || env.GITHUB_TOKEN || github.token }}
+        script: |
+          const fs = require("fs");
+          const path = require("path");
+
+          const manifestPath = path.resolve(process.env.GITHUB_WORKSPACE, "manifest.json");
+          const manifestContent = fs.readFileSync(manifestPath, "utf8");
+          const sourceRef = process.env.SOURCE_REF;
+          const artifactRef = process.env.ARTIFACT_REF;
+          const artifactBranchRef = `heads/${artifactRef}`;
+          const { owner, repo } = context.repo;
+
+          async function resolveBaseSha() {
+            try {
+              const { data } = await github.rest.git.getRef({
+                owner,
+                repo,
+                ref: `heads/${sourceRef}`,
+              });
+              return data.object.sha;
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+              const { data: repository } = await github.rest.repos.get({ owner, repo });
+              const { data: defaultRef } = await github.rest.git.getRef({
+                owner,
+                repo,
+                ref: `heads/${repository.default_branch}`,
+              });
+              core.warning(
+                `Source ref '${sourceRef}' not found, using '${repository.default_branch}' as artifact base.`
+              );
+              return defaultRef.object.sha;
+            }
+          }
+
+          async function ensureArtifactBranch() {
+            try {
+              await github.rest.git.getRef({ owner, repo, ref: artifactBranchRef });
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+              const baseSha = await resolveBaseSha();
+              try {
+                await github.rest.git.createRef({
+                  owner,
+                  repo,
+                  ref: `refs/${artifactBranchRef}`,
+                  sha: baseSha,
+                });
+                core.notice(`Created artifact branch '${artifactRef}'.`);
+              } catch (createError) {
+                if (createError.status === 422) {
+                  core.info(`Artifact branch '${artifactRef}' was created concurrently.`);
+                  return;
+                }
+                throw createError;
+              }
+            }
+          }
+
+          async function getManifestState() {
+            try {
+              const { data } = await github.rest.repos.getContent({
+                owner,
+                repo,
+                path: "manifest.json",
+                ref: artifactRef,
+              });
+              if (Array.isArray(data)) {
+                return { sha: undefined, content: null };
+              }
+              const decoded = Buffer.from(data.content, data.encoding || "base64").toString("utf8");
+              return { sha: data.sha, content: decoded };
+            } catch (error) {
+              if (error.status === 404) {
+                return { sha: undefined, content: null };
+              }
+              throw error;
+            }
+          }
+
+          await ensureArtifactBranch();
+          const existingManifest = await getManifestState();
+          if (existingManifest.content === manifestContent) {
+            core.info(`manifest.json is unchanged on '${artifactRef}', skipping commit.`);
+            return;
+          }
+
+          await github.rest.repos.createOrUpdateFileContents({
+            owner,
+            repo,
+            path: "manifest.json",
+            message: "chore: [skip ci] update manifest.json url",
+            content: Buffer.from(manifestContent, "utf8").toString("base64"),
+            branch: artifactRef,
+            ...(existingManifest.sha ? { sha: existingManifest.sha } : {}),
+          });
+
+          core.notice(`Updated manifest.json on '${artifactRef}'.`);
+      env:
+        SOURCE_REF: ${{ env.SOURCE_REF }}
+        ARTIFACT_REF: ${{ env.ARTIFACT_REF }}
 
     - name: Write Deployment URL to Summary
       if: inputs.action == 'deploy'
@@ -189,6 +327,8 @@ runs:
       run: |
         echo "### Deployment URL" >> $GITHUB_STEP_SUMMARY
         echo "${{ steps.deno_project.outputs.deployment_url }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Artifact branch: \`${ARTIFACT_REF}\`" >> $GITHUB_STEP_SUMMARY
 
     # === DELETE STEP ===
     - name: Delete Deno Deploy Project
@@ -203,9 +343,30 @@ runs:
           --force \
           --color=never || true
 
+    - name: Delete paired artifact branch
+      if: inputs.action == 'delete'
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ steps.app-token.outputs.token || env.GITHUB_TOKEN || github.token }}
+        script: |
+          const { owner, repo } = context.repo;
+          const artifactRef = process.env.ARTIFACT_REF;
+          try {
+            await github.rest.git.deleteRef({ owner, repo, ref: `heads/${artifactRef}` });
+            core.notice(`Deleted artifact branch '${artifactRef}'.`);
+          } catch (error) {
+            if (error.status === 404) {
+              core.info(`Artifact branch '${artifactRef}' does not exist. Skipping deletion.`);
+              return;
+            }
+            throw error;
+          }
+      env:
+        ARTIFACT_REF: ${{ env.ARTIFACT_REF }}
+
     - name: Write Deletion to Summary
       if: inputs.action == 'delete'
       shell: bash
       run: |
-        echo "### Deployment URL" >> $GITHUB_STEP_SUMMARY
-        echo "Deployment \`${DENO_PROJECT_NAME}\` has been deleted." >> $GITHUB_STEP_SUMMARY
+        echo "### Deletion Summary" >> $GITHUB_STEP_SUMMARY
+        echo "Deployment \`${DENO_PROJECT_NAME}\` and artifact branch \`${ARTIFACT_REF}\` have been deleted." >> $GITHUB_STEP_SUMMARY

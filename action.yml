@@ -359,12 +359,30 @@ runs:
         script: |
           const { owner, repo } = context.repo;
           const artifactRef = process.env.ARTIFACT_REF;
+
+          function isBranchNotFoundError(error) {
+            if (!error || typeof error !== "object") {
+              return false;
+            }
+
+            if (error.status === 404) {
+              return true;
+            }
+
+            if (error.status !== 422) {
+              return false;
+            }
+
+            const message = error?.response?.data?.message || error?.message || "";
+            return /reference .*does not exist/i.test(message);
+          }
+
           try {
             await github.rest.git.deleteRef({ owner, repo, ref: `heads/${artifactRef}` });
             core.notice(`Deleted artifact branch '${artifactRef}'.`);
           } catch (error) {
-            if (error.status === 404) {
-              core.info(`Artifact branch '${artifactRef}' does not exist. Skipping deletion.`);
+            if (isBranchNotFoundError(error)) {
+              core.warning(`Branch '${artifactRef}' could not be deleted because it was not found.`);
               return;
             }
             throw error;
@@ -379,4 +397,4 @@ runs:
         ARTIFACT_REF: ${{ steps.resolve_refs.outputs.artifact_ref }}
       run: |
         echo "### Deletion Summary" >> $GITHUB_STEP_SUMMARY
-        echo "Deployment \`${DENO_PROJECT_NAME}\` and artifact branch \`${ARTIFACT_REF}\` have been deleted." >> $GITHUB_STEP_SUMMARY
+        echo "Deployment \`${DENO_PROJECT_NAME}\` and artifact branch \`${ARTIFACT_REF}\` were deleted or already absent." >> $GITHUB_STEP_SUMMARY

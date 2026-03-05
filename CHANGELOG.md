@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.6.1](https://github.com/ubiquity-os/deno-deploy/compare/v1.6.0...v1.6.1) (2026-03-05)
+
+
+### Bug Fixes
+
+* **action:** default sourceRef for delete events ([87166b5](https://github.com/ubiquity-os/deno-deploy/commit/87166b5f07bd618de5c75862cbbfba3f339b5b34))
+* **action:** default sourceRef for delete events ([744385b](https://github.com/ubiquity-os/deno-deploy/commit/744385be651a4f9f8526537e0ac7bb3b7b90e4b0))
+
 ## [1.6.0](https://github.com/ubiquity-os/deno-deploy/compare/v1.5.0...v1.6.0) (2026-03-05)
 
 

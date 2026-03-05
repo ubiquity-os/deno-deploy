@@ -31,7 +31,7 @@ inputs:
   sourceRef:
     description: "Source branch ref used for deterministic project naming and artifact branch mapping."
     required: false
-    default: "${{ github.event.ref || github.event.workflow_run.head_branch || github.ref_name }}"
+    default: "${{ github.event_name == 'delete' && github.event.ref || github.event.workflow_run.head_branch || github.ref_name }}"
   artifactPrefix:
     description: "Prefix used for paired artifact branches."
     required: false
@@ -50,6 +50,7 @@ runs:
       run: deno install -gArf jsr:@deno/deployctl
 
     - name: Resolve source and artifact refs
+      id: resolve_refs
       shell: bash
       env:
         SOURCE_REF_INPUT: ${{ inputs.sourceRef }}
@@ -66,6 +67,7 @@ runs:
         if [ -z "$artifact_prefix" ]; then
           artifact_prefix="dist/"
         fi
+        artifact_prefix="${artifact_prefix#refs/heads/}"
         if [[ "$artifact_prefix" != */ ]]; then
           artifact_prefix="${artifact_prefix}/"
         fi
@@ -76,11 +78,15 @@ runs:
           artifact_ref="${artifact_prefix}${source_ref}"
         fi
 
+        echo "source_ref=$source_ref" >> "$GITHUB_OUTPUT"
+        echo "artifact_ref=$artifact_ref" >> "$GITHUB_OUTPUT"
         echo "SOURCE_REF=$source_ref" >> "$GITHUB_ENV"
         echo "ARTIFACT_REF=$artifact_ref" >> "$GITHUB_ENV"
 
     - name: Prepare Environment Variables
       shell: bash
+      env:
+        SOURCE_REF: ${{ steps.resolve_refs.outputs.source_ref }}
       run: |
         if [ -n "${{ inputs.project_name }}" ]; then
           new_name="${{ inputs.project_name }}"
@@ -318,12 +324,14 @@ runs:
 
           core.notice(`Updated manifest.json on '${artifactRef}'.`);
       env:
-        SOURCE_REF: ${{ env.SOURCE_REF }}
-        ARTIFACT_REF: ${{ env.ARTIFACT_REF }}
+        SOURCE_REF: ${{ steps.resolve_refs.outputs.source_ref }}
+        ARTIFACT_REF: ${{ steps.resolve_refs.outputs.artifact_ref }}
 
     - name: Write Deployment URL to Summary
       if: inputs.action == 'deploy'
       shell: bash
+      env:
+        ARTIFACT_REF: ${{ steps.resolve_refs.outputs.artifact_ref }}
       run: |
         echo "### Deployment URL" >> $GITHUB_STEP_SUMMARY
         echo "${{ steps.deno_project.outputs.deployment_url }}" >> $GITHUB_STEP_SUMMARY
@@ -362,11 +370,13 @@ runs:
             throw error;
           }
       env:
-        ARTIFACT_REF: ${{ env.ARTIFACT_REF }}
+        ARTIFACT_REF: ${{ steps.resolve_refs.outputs.artifact_ref }}
 
     - name: Write Deletion to Summary
       if: inputs.action == 'delete'
       shell: bash
+      env:
+        ARTIFACT_REF: ${{ steps.resolve_refs.outputs.artifact_ref }}
       run: |
         echo "### Deletion Summary" >> $GITHUB_STEP_SUMMARY
         echo "Deployment \`${DENO_PROJECT_NAME}\` and artifact branch \`${ARTIFACT_REF}\` have been deleted." >> $GITHUB_STEP_SUMMARY

@@ -55,6 +55,7 @@ runs:
       env:
         SOURCE_REF_INPUT: ${{ inputs.sourceRef }}
         ARTIFACT_PREFIX_INPUT: ${{ inputs.artifactPrefix }}
+        EVENT_REF_TYPE: ${{ github.event.ref_type || '' }}
       run: |
         source_ref="$SOURCE_REF_INPUT"
         source_ref="${source_ref#refs/heads/}"
@@ -78,12 +79,40 @@ runs:
           artifact_ref="${artifact_prefix}${source_ref}"
         fi
 
+        is_tag_ref="false"
+        if [[ "$EVENT_REF_TYPE" == "tag" ]] || [[ "${GITHUB_REF:-}" == refs/tags/* ]]; then
+          is_tag_ref="true"
+        fi
+
+        should_skip="false"
+        skip_reason=""
+        if [[ "$is_tag_ref" == "true" ]]; then
+          should_skip="true"
+          skip_reason="tag refs are not supported"
+        elif [[ "$source_ref" == "$artifact_prefix"* ]]; then
+          should_skip="true"
+          skip_reason="artifact refs are ignored"
+        fi
+
         echo "source_ref=$source_ref" >> "$GITHUB_OUTPUT"
         echo "artifact_ref=$artifact_ref" >> "$GITHUB_OUTPUT"
+        echo "is_tag_ref=$is_tag_ref" >> "$GITHUB_OUTPUT"
+        echo "should_skip=$should_skip" >> "$GITHUB_OUTPUT"
+        echo "skip_reason=$skip_reason" >> "$GITHUB_OUTPUT"
         echo "SOURCE_REF=$source_ref" >> "$GITHUB_ENV"
         echo "ARTIFACT_REF=$artifact_ref" >> "$GITHUB_ENV"
 
+    - name: Skip unsupported refs
+      if: ${{ steps.resolve_refs.outputs.should_skip == 'true' }}
+      shell: bash
+      env:
+        SOURCE_REF: ${{ steps.resolve_refs.outputs.source_ref }}
+        SKIP_REASON: ${{ steps.resolve_refs.outputs.skip_reason }}
+      run: |
+        echo "::notice::Skipping action for '${SOURCE_REF}' (${SKIP_REASON})."
+
     - name: Prepare Environment Variables
+      if: ${{ steps.resolve_refs.outputs.should_skip != 'true' }}
       shell: bash
       env:
         SOURCE_REF: ${{ steps.resolve_refs.outputs.source_ref }}
@@ -117,7 +146,7 @@ runs:
 
     # === DEPLOY STEPS ===
     - name: Generate .env File
-      if: inputs.action == 'deploy' && inputs.generateEnv == 'true'
+      if: inputs.action == 'deploy' && inputs.generateEnv == 'true' && steps.resolve_refs.outputs.should_skip != 'true'
       shell: bash
       run: |
         cat > generate-env.ts <<'EOF'
@@ -136,7 +165,7 @@ runs:
         rm generate-env.ts
 
     - name: Manage Deno Deploy Project (Deploy)
-      if: inputs.action == 'deploy'
+      if: inputs.action == 'deploy' && steps.resolve_refs.outputs.should_skip != 'true'
       shell: bash
       id: deno_project
       env:
@@ -156,7 +185,7 @@ runs:
         echo "deployment_url=$PROJECT_URL" >> $GITHUB_OUTPUT
 
     - name: Update manifest.json with deployment URL
-      if: inputs.action == 'deploy'
+      if: inputs.action == 'deploy' && steps.resolve_refs.outputs.should_skip != 'true'
       uses: actions/github-script@v7
       with:
         script: |
@@ -179,7 +208,7 @@ runs:
           console.log('Updated manifest:', updatedManifest);
 
     - name: Deploy to Deno
-      if: inputs.action == 'deploy'
+      if: inputs.action == 'deploy' && steps.resolve_refs.outputs.should_skip != 'true'
       shell: bash
       env:
         DENO_DEPLOY_TOKEN: ${{ inputs.token }}
@@ -192,7 +221,7 @@ runs:
           ${{ inputs.production == 'true' && '--prod' || '' }}
 
     - name: Get GitHub App token
-      if: env.APP_ID != '' && env.APP_PRIVATE_KEY != ''
+      if: env.APP_ID != '' && env.APP_PRIVATE_KEY != '' && steps.resolve_refs.outputs.should_skip != 'true'
       uses: actions/create-github-app-token@v1
       id: app-token
       with:
@@ -201,7 +230,7 @@ runs:
 
     - name: Check if manifest.json exists
       id: check_manifest
-      if: inputs.action == 'deploy'
+      if: inputs.action == 'deploy' && steps.resolve_refs.outputs.should_skip != 'true'
       shell: bash
       run: |
         if [ -f manifest.json ]; then
@@ -212,13 +241,13 @@ runs:
 
     - name: Format manifest using Prettier
       shell: bash
-      if: inputs.action == 'deploy' && steps.check_manifest.outputs.exists == 'true'
+      if: inputs.action == 'deploy' && steps.check_manifest.outputs.exists == 'true' && steps.resolve_refs.outputs.should_skip != 'true'
       continue-on-error: true
       run: |
         npx prettier --write manifest.json
 
     - name: Publish manifest.json to artifact branch
-      if: inputs.action == 'deploy' && steps.check_manifest.outputs.exists == 'true'
+      if: inputs.action == 'deploy' && steps.check_manifest.outputs.exists == 'true' && steps.resolve_refs.outputs.should_skip != 'true'
       uses: actions/github-script@v7
       with:
         github-token: ${{ steps.app-token.outputs.token || env.GITHUB_TOKEN || github.token }}
@@ -328,7 +357,7 @@ runs:
         ARTIFACT_REF: ${{ steps.resolve_refs.outputs.artifact_ref }}
 
     - name: Write Deployment URL to Summary
-      if: inputs.action == 'deploy'
+      if: inputs.action == 'deploy' && steps.resolve_refs.outputs.should_skip != 'true'
       shell: bash
       env:
         ARTIFACT_REF: ${{ steps.resolve_refs.outputs.artifact_ref }}
@@ -340,7 +369,7 @@ runs:
 
     # === DELETE STEP ===
     - name: Delete Deno Deploy Project
-      if: inputs.action == 'delete'
+      if: inputs.action == 'delete' && steps.resolve_refs.outputs.should_skip != 'true'
       shell: bash
       env:
         DENO_DEPLOY_TOKEN: ${{ inputs.token }}
@@ -352,7 +381,7 @@ runs:
           --color=never || true
 
     - name: Delete paired artifact branch
-      if: inputs.action == 'delete'
+      if: inputs.action == 'delete' && steps.resolve_refs.outputs.should_skip != 'true'
       uses: actions/github-script@v7
       with:
         github-token: ${{ steps.app-token.outputs.token || env.GITHUB_TOKEN || github.token }}
@@ -391,7 +420,7 @@ runs:
         ARTIFACT_REF: ${{ steps.resolve_refs.outputs.artifact_ref }}
 
     - name: Write Deletion to Summary
-      if: inputs.action == 'delete'
+      if: inputs.action == 'delete' && steps.resolve_refs.outputs.should_skip != 'true'
       shell: bash
       env:
         ARTIFACT_REF: ${{ steps.resolve_refs.outputs.artifact_ref }}

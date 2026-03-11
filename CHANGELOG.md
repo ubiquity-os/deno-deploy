@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.7.0](https://github.com/ubiquity-os/deno-deploy/compare/v1.6.1...v1.7.0) (2026-03-11)
+
+
+### Features
+
+* **ci:** move manifest updates to artifact branches ([2616da8](https://github.com/ubiquity-os/deno-deploy/commit/2616da80185ef6ac5cae1208836790032facc39d))
+
+
+### Bug Fixes
+
+* do not fail delete when artifact branch is already absent ([59c61b5](https://github.com/ubiquity-os/deno-deploy/commit/59c61b53d7128d2dc8b436da3e1e2beebfd9a87a))
+* skip dist and tag refs in deploy action ([#26](https://github.com/ubiquity-os/deno-deploy/issues/26)) ([e72e184](https://github.com/ubiquity-os/deno-deploy/commit/e72e184943435473f7920fc204c1f2939af48b50))
+* tolerate missing artifact branch during delete ([667afa4](https://github.com/ubiquity-os/deno-deploy/commit/667afa4abaa42b3d013605fe01bf26fc6e13a150))
+
 ## [1.6.1](https://github.com/ubiquity-os/deno-deploy/compare/v1.6.0...v1.6.1) (2026-03-05)
 
 

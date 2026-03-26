@@ -1,56 +1,82 @@
 # deno-deploy
 
-Deploys a plugin to Deno and keeps generated `manifest.json` updates on paired artifact branches.
+Provisions a GitHub-linked Deno Deploy app, syncs environment variables, and keeps generated `manifest.json` updates on `dist/*` branches.
 
-## Artifact branch model
+## Behavior
 
+- One Deno Deploy app is managed per repository.
+- Deno Deploy handles branch timelines after the app is linked to GitHub.
 - Source branch `R` maps to artifact branch `dist/R`.
-- If `R` already starts with `dist/`, it is used as-is.
-- On `deploy`, this action updates `homepage_url` and publishes `manifest.json` to the artifact branch root.
-- On `delete`, this action deletes both the Deno project and the paired artifact branch.
-- Source branches no longer receive generated manifest commits.
+- `publish-manifest` updates `manifest.json.homepage_url` with the routed branch timeline URL and writes it to `dist/R`.
+- `delete` only removes the paired `dist/*` branch. It never deletes the Deno app.
 
-## Requirements
+## Inputs
 
-- Your plugin should be written for ESM.
-- Imports should not be shortened (for example `./myFolder/index` instead of `./myFolder`).
-- There should be an entrypoint for `fetch`, exported as default.
-- Node imports must be explicit (for example `import { Buffer } from "node:buffer"`).
+- `action`: `provision`, `publish-manifest`, or `delete`.
+- `token`: Deno Deploy token used for provisioning, environment sync, and revision timeline lookups.
+- `organization`: Deno Deploy organization slug. Required for `provision`.
+- `app`: Optional Deno Deploy app slug override. Defaults to the sanitized repository name.
+- `entrypoint`: Entrypoint used when creating the Deno Deploy app. Defaults to `src/deno.ts`.
+- `syncEnv`: Whether to sync workflow environment variables during `provision`. Defaults to `true`.
 
-## Key inputs
+## Environment sync
 
-- `action`: `deploy` or `delete`.
-- `token`: Deno Deploy token.
-- `entrypoint`: Entrypoint file to deploy.
-- `project_name`: Optional override for the generated Deno project name.
-- `sourceRef`: Source branch ref used for deterministic project naming and artifact-branch mapping (defaults to delete-aware branch resolution).
-- `artifactPrefix`: Artifact branch prefix (default `dist/`).
+- The repository default branch syncs variables to the `Production` context.
+- All other branches sync variables to the shared `Development` context.
+- Non-default branches share one development context, so later runs can replace development-scoped values from earlier runs.
 
-## Example
+## Example workflow
 
 ```yaml
 name: Deno Deploy
 
 on:
-  workflow_dispatch:
   push:
+    branches-ignore:
+      - dist/**
+  repository_dispatch:
+    types: [deno_deploy.build.routed]
   delete:
 
 jobs:
-  deploy:
+  provision:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: ubiquity-os/deno-deploy@main
+        env:
+          KERNEL_PUBLIC_KEY: ${{ secrets.KERNEL_PUBLIC_KEY }}
+        with:
+          action: provision
+          token: ${{ secrets.DENO_DEPLOY_TOKEN }}
+          organization: ${{ vars.DENO_DEPLOY_ORGANIZATION }}
+
+  publish-manifest:
+    if: github.event_name == 'repository_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      id-token: write
 
     steps:
-      - uses: actions/checkout@v5
-
       - uses: ubiquity-os/deno-deploy@main
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          KERNEL_PUBLIC_KEY: ${{ secrets.KERNEL_PUBLIC_KEY }}
         with:
+          action: publish-manifest
           token: ${{ secrets.DENO_DEPLOY_TOKEN }}
-          action: ${{ github.event_name == 'delete' && 'delete' || 'deploy' }}
+          organization: ${{ vars.DENO_DEPLOY_ORGANIZATION }}
+
+  delete-dist-branch:
+    if: github.event_name == 'delete'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: ubiquity-os/deno-deploy@main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          action: delete
 ```

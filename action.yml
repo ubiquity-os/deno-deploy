@@ -295,7 +295,6 @@ runs:
         set -euo pipefail
 
         deno deploy create \
-          --token "$DENO_DEPLOY_TOKEN" \
           --source github \
           --owner "$REPOSITORY_OWNER" \
           --repo "$REPOSITORY_NAME" \

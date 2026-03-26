@@ -300,11 +300,14 @@ runs:
           --repo "$REPOSITORY_NAME" \
           --org "$DENO_ORG" \
           --app "$DENO_APP_SLUG" \
-          --app-directory / \
+          --app-directory "" \
           --runtime-mode dynamic \
           --entrypoint "$ENTRYPOINT" \
           --region global \
-          --no-wait
+          --no-wait \
+          --install-command "deno install && deno x -y @ubiquity-os/plugin-manifest-tool@latest" \
+          --build-command " " \
+          --pre-deploy-command "deno install"
 
     - name: Note shared preview context
       if: ${{ steps.resolve.outputs.action_mode == 'provision' && steps.resolve.outputs.should_skip != 'true' && inputs.syncEnv == 'true' && steps.resolve.outputs.environment_context == 'preview' }}

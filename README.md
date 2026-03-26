@@ -50,7 +50,7 @@ jobs:
         with:
           action: provision
           token: ${{ secrets.DENO_2_DEPLOY_TOKEN }}
-          organization: ${{ vars.DENO_DEPLOY_ORGANIZATION }}
+          organization: ${{ vars.DENO_ORG_NAME }}
 
   publish-manifest:
     if: github.event_name == 'repository_dispatch'
@@ -65,7 +65,7 @@ jobs:
         with:
           action: publish-manifest
           token: ${{ secrets.DENO_2_DEPLOY_TOKEN }}
-          organization: ${{ vars.DENO_DEPLOY_ORGANIZATION }}
+          organization: ${{ vars.DENO_ORG_NAME }}
 
   delete-dist-branch:
     if: github.event_name == 'delete'

@@ -22,8 +22,8 @@ Provisions a GitHub-linked Deno Deploy app, syncs environment variables, and kee
 ## Environment sync
 
 - The repository default branch syncs variables to the `Production` context.
-- All other branches sync variables to the shared `Development` context.
-- Non-default branches share one development context, so later runs can replace development-scoped values from earlier runs.
+- All other branches sync variables to the shared `Preview` context.
+- Non-default branches share one preview context, so later runs can replace preview-scoped values from earlier runs.
 
 ## Example workflow
 

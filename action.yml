@@ -85,7 +85,7 @@ runs:
           is_dist_ref="true"
         fi
 
-        env_context="development"
+        env_context="preview"
         if [ -n "$DEFAULT_BRANCH_INPUT" ] && [ "$ref_name" = "$DEFAULT_BRANCH_INPUT" ]; then
           env_context="production"
         fi
@@ -307,11 +307,11 @@ runs:
           --region global \
           --no-wait
 
-    - name: Note shared development context
-      if: ${{ steps.resolve.outputs.action_mode == 'provision' && steps.resolve.outputs.should_skip != 'true' && inputs.syncEnv == 'true' && steps.resolve.outputs.environment_context == 'development' }}
+    - name: Note shared preview context
+      if: ${{ steps.resolve.outputs.action_mode == 'provision' && steps.resolve.outputs.should_skip != 'true' && inputs.syncEnv == 'true' && steps.resolve.outputs.environment_context == 'preview' }}
       shell: bash
       run: |
-        echo "::notice::Non-default branches share the Deno Deploy Development context. Later runs on other branches can replace development-scoped values."
+        echo "::notice::Non-default branches share the Deno Deploy Preview context. Later runs on other branches can replace preview-scoped values."
 
     - name: Generate environment snapshot
       if: ${{ steps.resolve.outputs.action_mode == 'provision' && steps.resolve.outputs.should_skip != 'true' && inputs.syncEnv == 'true' }}

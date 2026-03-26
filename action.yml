@@ -300,7 +300,7 @@ runs:
           --repo "$REPOSITORY_NAME" \
           --org "$DENO_ORG" \
           --app "$DENO_APP_SLUG" \
-          --app-directory . \
+          --app-directory " " \
           --runtime-mode dynamic \
           --entrypoint "$ENTRYPOINT" \
           --region global \

@@ -49,7 +49,7 @@ jobs:
           KERNEL_PUBLIC_KEY: ${{ secrets.KERNEL_PUBLIC_KEY }}
         with:
           action: provision
-          token: ${{ secrets.DENO_DEPLOY_TOKEN }}
+          token: ${{ secrets.DENO_2_DEPLOY_TOKEN }}
           organization: ${{ vars.DENO_DEPLOY_ORGANIZATION }}
 
   publish-manifest:
@@ -64,7 +64,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           action: publish-manifest
-          token: ${{ secrets.DENO_DEPLOY_TOKEN }}
+          token: ${{ secrets.DENO_2_DEPLOY_TOKEN }}
           organization: ${{ vars.DENO_DEPLOY_ORGANIZATION }}
 
   delete-dist-branch:

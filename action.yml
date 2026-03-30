@@ -1,28 +1,34 @@
 name: "Deploy to Deno"
-description: "Provisions a GitHub-linked Deno Deploy app, syncs environment variables, and publishes manifest.json to dist/* branches."
+description: "Provisions a Deno Deploy app through API v2, deploys git-tracked assets, syncs environment variables, and publishes manifest.json to dist/* branches."
 inputs:
   action:
-    description: "Action to perform: 'provision', 'publish-manifest', or 'delete'."
+    description: "Action to perform: 'provision' or 'delete'."
     required: true
     default: "provision"
   token:
-    description: "Deno Deploy token used for provisioning, environment sync, and revision timeline lookups."
-    required: false
-  organization:
-    description: "Deno Deploy organization slug. Required for provisioning."
+    description: "Deno API v2 Bearer token (ddo_...) used for app management, deploys, and revision lookups."
     required: false
   app:
     description: "Optional Deno Deploy app slug override. Defaults to the sanitized repository name."
     required: false
   entrypoint:
-    description: "Entrypoint used when creating the Deno Deploy app."
+    description: "Entrypoint used for the app runtime configuration."
     required: false
     default: "src/deno.ts"
   syncEnv:
     description: "Whether to sync workflow environment variables during provisioning."
     required: false
     default: "true"
-outputs: {}
+outputs:
+  app_slug:
+    description: "Resolved Deno Deploy app slug."
+    value: ${{ steps.provision.outputs.app_slug }}
+  revision_id:
+    description: "Created Deno Deploy revision id."
+    value: ${{ steps.provision.outputs.revision_id }}
+  homepage_url:
+    description: "Published homepage_url written to manifest.json when available."
+    value: ${{ steps.provision.outputs.homepage_url }}
 runs:
   using: "composite"
   steps:
@@ -39,7 +45,6 @@ runs:
         APP_INPUT: ${{ inputs.app }}
         DEFAULT_BRANCH_INPUT: ${{ github.event.repository.default_branch }}
         DELETE_REF_INPUT: ${{ github.event.ref || '' }}
-        EVENT_ACTION_INPUT: ${{ github.event.action || '' }}
         EVENT_REF_TYPE_INPUT: ${{ github.event.ref_type || '' }}
         REPO_NAME_INPUT: ${{ github.event.repository.name }}
         REF_NAME_INPUT: ${{ github.ref_name }}
@@ -48,9 +53,9 @@ runs:
 
         action="$ACTION_INPUT"
         case "$action" in
-          provision|publish-manifest|delete) ;;
+          provision|delete) ;;
           *)
-            echo "::error::Unsupported action '$action'. Expected 'provision', 'publish-manifest', or 'delete'."
+            echo "::error::Unsupported action '$action'. Expected 'provision' or 'delete'."
             exit 1
             ;;
         esac
@@ -103,15 +108,6 @@ runs:
               skip_reason="dist branches are ignored"
             fi
             ;;
-          publish-manifest)
-            if [ "$GITHUB_EVENT_NAME" != "repository_dispatch" ]; then
-              should_skip="true"
-              skip_reason="publish-manifest only handles repository_dispatch events"
-            elif [ "$EVENT_ACTION_INPUT" != "deno_deploy.build.routed" ]; then
-              should_skip="true"
-              skip_reason="repository_dispatch action is not deno_deploy.build.routed"
-            fi
-            ;;
           delete)
             if [ "$GITHUB_EVENT_NAME" != "delete" ]; then
               should_skip="true"
@@ -157,8 +153,6 @@ runs:
       shell: bash
       env:
         ACTION_MODE: ${{ steps.resolve.outputs.action_mode }}
-        EVENT_ORG_INPUT: ${{ github.event.client_payload.organization.slug || '' }}
-        ORG_INPUT: ${{ inputs.organization }}
         TOKEN_INPUT: ${{ inputs.token }}
       run: |
         set -euo pipefail
@@ -169,586 +163,59 @@ runs:
               echo "::error::The 'token' input is required for provision."
               exit 1
             fi
-            if [ -z "$ORG_INPUT" ]; then
-              echo "::error::The 'organization' input is required for provision."
-              exit 1
-            fi
-            ;;
-          publish-manifest)
-            if [ -z "$TOKEN_INPUT" ]; then
-              echo "::error::The 'token' input is required for publish-manifest."
-              exit 1
-            fi
-            if [ -z "$EVENT_ORG_INPUT" ] && [ -z "$ORG_INPUT" ]; then
-              echo "::error::publish-manifest requires an organization in the repository_dispatch payload or the 'organization' input."
-              exit 1
-            fi
             ;;
         esac
 
     - name: Get GitHub App token
-      if: ${{ steps.resolve.outputs.should_skip != 'true' && (steps.resolve.outputs.action_mode == 'publish-manifest' || steps.resolve.outputs.action_mode == 'delete') && env.APP_ID != '' && env.APP_PRIVATE_KEY != '' }}
+      if: ${{ steps.resolve.outputs.should_skip != 'true' && env.APP_ID != '' && env.APP_PRIVATE_KEY != '' }}
       uses: actions/create-github-app-token@v1
       id: app-token
       with:
         app-id: ${{ env.APP_ID }}
         private-key: ${{ env.APP_PRIVATE_KEY }}
 
-    - name: Check Deno app
+    - name: Provision Deno app
       if: ${{ steps.resolve.outputs.action_mode == 'provision' && steps.resolve.outputs.should_skip != 'true' }}
-      id: check_app
-      uses: actions/github-script@v7
-      env:
-        DENO_APP_SLUG: ${{ steps.resolve.outputs.app_slug }}
-        DENO_DEPLOY_TOKEN: ${{ inputs.token }}
-        DENO_ORG: ${{ inputs.organization }}
-        EXPECTED_GITHUB_OWNER: ${{ github.repository_owner }}
-        EXPECTED_GITHUB_REPO: ${{ github.event.repository.name }}
-      with:
-        script: |
-          const appSlug = process.env.DENO_APP_SLUG;
-          const org = process.env.DENO_ORG;
-          const token = process.env.DENO_DEPLOY_TOKEN;
-          const expectedOwner = process.env.EXPECTED_GITHUB_OWNER;
-          const expectedRepo = process.env.EXPECTED_GITHUB_REPO;
-
-          const response = await fetch(`https://console.deno.com/api/v2/apps/${encodeURIComponent(appSlug)}`, {
-            headers: {
-              Authorization: `Bearer ${token}`,
-              Accept: "application/json",
-              "X-Deno-Org": org,
-            },
-          });
-
-          if (response.status === 404) {
-            core.setOutput("exists", "false");
-            return;
-          }
-
-          if (!response.ok) {
-            const body = await response.text();
-            throw new Error(`Failed to fetch Deno app '${appSlug}' (${response.status}): ${body}`);
-          }
-
-          const app = await response.json();
-          const expected = `${expectedOwner}/${expectedRepo}`.toLowerCase();
-          const repoCandidates = [];
-
-          const collectRepo = (value) => {
-            if (!value) {
-              return;
-            }
-
-            if (typeof value === "string") {
-              const normalized = value.replace(/^https?:\/\/github\.com\//i, "").replace(/\.git$/i, "").replace(/^\/+/, "");
-              if (normalized.includes("/")) {
-                repoCandidates.push(normalized.toLowerCase());
-              }
-              return;
-            }
-
-            if (typeof value === "object") {
-              const owner = value.owner ?? value.login ?? value.org ?? value.organization ?? value.account;
-              const repo = value.repo ?? value.name ?? value.repository ?? value.slug;
-              if (owner && repo) {
-                repoCandidates.push(`${owner}/${repo}`.toLowerCase());
-              }
-            }
-          };
-
-          collectRepo(app.repo);
-          collectRepo(app.github_repo);
-          collectRepo(app.githubRepo);
-          collectRepo(app.repository);
-          collectRepo(app.source?.repo);
-          collectRepo(app.source?.repository);
-          collectRepo(app.source?.github);
-          collectRepo(app.github);
-          collectRepo(app.git);
-
-          const uniqueCandidates = [...new Set(repoCandidates)];
-          if (uniqueCandidates.length > 0 && !uniqueCandidates.includes(expected)) {
-            throw new Error(
-              `Deno app '${appSlug}' already exists but is linked to ${uniqueCandidates.join(", ")} instead of ${expected}.`,
-            );
-          }
-
-          if (uniqueCandidates.length === 0) {
-            core.notice(`Using existing Deno app '${appSlug}'. The console API response did not expose GitHub linkage metadata to verify automatically.`);
-          } else {
-            core.notice(`Using existing Deno app '${appSlug}'.`);
-          }
-
-          core.setOutput("exists", "true");
-
-    - name: Create Deno app
-      if: ${{ steps.resolve.outputs.action_mode == 'provision' && steps.resolve.outputs.should_skip != 'true' && steps.check_app.outputs.exists != 'true' }}
+      id: provision
       shell: bash
       env:
-        DENO_DEPLOY_TOKEN: ${{ inputs.token }}
-        DENO_ORG: ${{ inputs.organization }}
+        ACTION_PATH: ${{ github.action_path }}
+        DEFAULT_BRANCH: ${{ steps.resolve.outputs.default_branch }}
+        DENO_API_TOKEN: ${{ inputs.token }}
         DENO_APP_SLUG: ${{ steps.resolve.outputs.app_slug }}
         ENTRYPOINT: ${{ inputs.entrypoint }}
-        REPOSITORY_NAME: ${{ github.event.repository.name }}
-        REPOSITORY_OWNER: ${{ github.repository_owner }}
+        GITHUB_OWNER: ${{ github.repository_owner }}
+        GITHUB_REPO: ${{ github.event.repository.name }}
+        GITHUB_SHA: ${{ github.sha }}
+        GITHUB_TOKEN: ${{ steps.app-token.outputs.token || env.GITHUB_TOKEN || github.token }}
+        REF_NAME: ${{ steps.resolve.outputs.ref_name }}
+        REPO_ROOT: ${{ github.workspace }}
+        SYNC_ENV: ${{ inputs.syncEnv }}
       run: |
         set -euo pipefail
-
-        deno deploy create \
-          --source github \
-          --owner "$REPOSITORY_OWNER" \
-          --repo "$REPOSITORY_NAME" \
-          --org "$DENO_ORG" \
-          --app "$DENO_APP_SLUG" \
-          --app-directory " " \
-          --runtime-mode dynamic \
-          --entrypoint "$ENTRYPOINT" \
-          --region global \
-          --no-wait \
-          --install-command "deno install && deno x -y @ubiquity-os/plugin-manifest-tool@latest" \
-          --build-command " " \
-          --pre-deploy-command "deno install"
-
-    - name: Note shared preview context
-      if: ${{ steps.resolve.outputs.action_mode == 'provision' && steps.resolve.outputs.should_skip != 'true' && inputs.syncEnv == 'true' && steps.resolve.outputs.environment_context == 'preview' }}
-      shell: bash
-      run: |
-        echo "::notice::Non-default branches share the Deno Deploy Preview context. Later runs on other branches can replace preview-scoped values."
-
-    - name: Generate environment snapshot
-      if: ${{ steps.resolve.outputs.action_mode == 'provision' && steps.resolve.outputs.should_skip != 'true' && inputs.syncEnv == 'true' }}
-      id: generate_env
-      shell: bash
-      env:
-        ENV_FILE_PATH: ${{ runner.temp }}/deno-deploy.env
-      run: |
-        set -euo pipefail
-
-        cat > "$RUNNER_TEMP/generate-env.ts" <<'EOF'
-        const envFile = Deno.env.get("ENV_FILE_PATH");
-        if (!envFile) {
-          throw new Error("ENV_FILE_PATH is required.");
-        }
-
-        const excluded = /^(GITHUB_|RUNNER_|CI$|HOME$|PATH$|PWD$|SHELL$|SHLVL$|LANG$|LC_|TZ$|ACTIONS_|INPUT_|STATE_|JAVA_HOME$|POWERSHELL_)/;
-        const filtered = Object.entries(Deno.env.toObject())
-          .filter(([key]) => !excluded.test(key))
-          .filter(([key]) => key !== "DENO_DEPLOY_TOKEN")
-          .filter(([, value]) => value !== undefined && value !== null && value.trim() !== "")
-          .sort(([left], [right]) => left.localeCompare(right));
-
-        const lines = filtered.map(([key, value]) => {
-          const escaped = value
-            .replace(/\\/g, "\\\\")
-            .replace(/\n/g, "\\n")
-            .replace(/\r/g, "\\r")
-            .replace(/"/g, '\\"');
-          return `${key}="${escaped}"`;
-        });
-
-        await Deno.writeTextFile(envFile, lines.length === 0 ? "" : `${lines.join("\n")}\n`);
-        console.log(filtered.length);
-        EOF
-
-        key_count="$(ENV_FILE_PATH="$ENV_FILE_PATH" deno run --allow-env --allow-write="$RUNNER_TEMP" "$RUNNER_TEMP/generate-env.ts")"
-        rm "$RUNNER_TEMP/generate-env.ts"
-
-        echo "env_file=$ENV_FILE_PATH" >> "$GITHUB_OUTPUT"
-        echo "key_count=$key_count" >> "$GITHUB_OUTPUT"
-
-    - name: Sync Deno Deploy environment variables
-      if: ${{ steps.resolve.outputs.action_mode == 'provision' && steps.resolve.outputs.should_skip != 'true' && inputs.syncEnv == 'true' && steps.generate_env.outputs.key_count != '0' }}
-      shell: bash
-      env:
-        DENO_APP_SLUG: ${{ steps.resolve.outputs.app_slug }}
-        DENO_DEPLOY_TOKEN: ${{ inputs.token }}
-        DENO_ENV_CONTEXT: ${{ steps.resolve.outputs.environment_context }}
-        DENO_ORG: ${{ inputs.organization }}
-        ENV_FILE_PATH: ${{ steps.generate_env.outputs.env_file }}
-      run: |
-        set -euo pipefail
-
-        cat > "$RUNNER_TEMP/sync-deno-env.ts" <<'EOF'
-        import { parse as parseDotEnv } from "jsr:@std/dotenv@0.225.6";
-        import { createTRPCUntypedClient, httpBatchStreamLink } from "npm:@trpc/client@11.15.0";
-        import type { TRPCCombinedDataTransformer } from "npm:@trpc/server@11.15.0";
-        import { serialize } from "npm:superjson@2.2.6";
-
-        type EnvVar = {
-          id: string;
-          key: string;
-          value: string | null;
-          is_secret: boolean;
-          context_ids: string[] | null;
-        };
-
-        type Context = {
-          id: string;
-          name: string;
-        };
-
-        function requireEnv(name: string): string {
-          const value = Deno.env.get(name);
-          if (!value) {
-            throw new Error(`${name} is required.`);
-          }
-          return value;
-        }
-
-        const endpoint = Deno.env.get("DENO_DEPLOY_ENDPOINT") ?? "https://console.deno.com";
-        const token = requireEnv("DENO_DEPLOY_TOKEN");
-        const org = requireEnv("DENO_ORG");
-        const app = requireEnv("DENO_APP_SLUG");
-        const envFilePath = requireEnv("ENV_FILE_PATH");
-        const targetContextName = requireEnv("DENO_ENV_CONTEXT");
-        const variables = parseDotEnv(await Deno.readTextFile(envFilePath));
-
-        const transformer: TRPCCombinedDataTransformer = {
-          input: {
-            serialize,
-            deserialize: (_) => {
-              throw new Error("Unexpected transformer input deserialization.");
-            },
-          },
-          output: {
-            serialize: (_) => {
-              throw new Error("Unexpected transformer output serialization.");
-            },
-            deserialize: (object) => (0, eval)(`(${object})`),
-          },
-        };
-
-        const client = createTRPCUntypedClient({
-          links: [
-            httpBatchStreamLink({
-              url: `${endpoint}/api`,
-              transformer,
-              headers: async () => ({
-                cookie: `token=${token}; deno_auth_ghid=force`,
-              }),
-            }),
-          ],
-        });
-
-        const appInfo = await client.query("apps.get", { org, app }) as { id: string };
-        const contexts = await client.query("envVarsContexts.listContexts", { org }) as Context[];
-        const targetContext = contexts.find((context) =>
-          context.name.toLowerCase() === targetContextName.toLowerCase()
-        );
-
-        if (!targetContext) {
-          throw new Error(`Context '${targetContextName}' was not found in organization '${org}'.`);
-        }
-
-        const existingEnvVars = await client.query("envVarsContexts.list", { org, app }) as EnvVar[];
-        const hasPublicPrefix = Object.keys(variables).some((key) => /^PUBLIC_|^NEXT_PUBLIC_/.test(key));
-        const commonSecretPattern =
-          /^(?!.*(?:^|_)(PUBLIC|NEXT_PUBLIC|EXPOSED)(?:_|$)).*(KEY|SECRET|TOKEN|PASSWORD|PRIVATE|CREDENTIALS|AUTH)(?![A-Za-z])/i;
-
-        const add = [];
-        const update = [];
-
-        for (const [key, value] of Object.entries(variables)) {
-          const isSecret = hasPublicPrefix ? !/^PUBLIC_|^NEXT_PUBLIC_/.test(key) : commonSecretPattern.test(key);
-          const exactTarget = existingEnvVars.find((envVar) =>
-            envVar.key === key &&
-            Array.isArray(envVar.context_ids) &&
-            envVar.context_ids.length === 1 &&
-            envVar.context_ids[0] === targetContext.id
-          );
-          const overlappingTarget = existingEnvVars.find((envVar) =>
-            envVar.key === key &&
-            (
-              envVar.context_ids === null ||
-              envVar.context_ids.includes(targetContext.id)
-            )
-          );
-          const current = exactTarget ?? overlappingTarget;
-
-          if (current) {
-            update.push({
-              id: current.id,
-              key,
-              value,
-              is_secret: isSecret,
-              context_ids: [targetContext.id],
-            });
-          } else {
-            add.push({
-              app_id: appInfo.id,
-              key,
-              value,
-              is_secret: isSecret,
-              context_ids: [targetContext.id],
-            });
-          }
-        }
-
-        await client.mutation("envVarsContexts.updateEnvVars", {
-          org,
-          add,
-          update,
-          remove: [],
-        });
-
-        console.log(`Synchronized ${Object.keys(variables).length} environment variables to ${targetContext.name}.`);
-        EOF
 
         deno run \
           --allow-env \
-          --allow-read="$RUNNER_TEMP" \
-          --allow-net=console.deno.com \
-          "$RUNNER_TEMP/sync-deno-env.ts"
-
-        rm "$RUNNER_TEMP/sync-deno-env.ts"
-
-    - name: Publish manifest to dist branches
-      if: ${{ steps.resolve.outputs.action_mode == 'publish-manifest' && steps.resolve.outputs.should_skip != 'true' }}
-      uses: actions/github-script@v7
-      env:
-        DENO_APP_SLUG: ${{ steps.resolve.outputs.app_slug }}
-        DENO_DEPLOY_TOKEN: ${{ inputs.token }}
-        DENO_ORG: ${{ inputs.organization }}
-      with:
-        github-token: ${{ steps.app-token.outputs.token || env.GITHUB_TOKEN || github.token }}
-        script: |
-          const denoToken = process.env.DENO_DEPLOY_TOKEN;
-          const fallbackApp = process.env.DENO_APP_SLUG;
-          const fallbackOrg = process.env.DENO_ORG;
-          const payload = context.payload.client_payload ?? {};
-          const revisionId = payload.revision?.id;
-          const appSlug = payload.app?.slug ?? fallbackApp;
-          const org = payload.organization?.slug ?? fallbackOrg;
-
-          if (!revisionId) {
-            throw new Error("repository_dispatch payload is missing client_payload.revision.id");
-          }
-          if (!appSlug) {
-            throw new Error("Unable to resolve the Deno Deploy app slug for publish-manifest.");
-          }
-          if (!org) {
-            throw new Error("Unable to resolve the Deno Deploy organization for publish-manifest.");
-          }
-
-          const response = await fetch(`https://console.deno.com/api/v2/revisions/${encodeURIComponent(revisionId)}/timelines`, {
-            headers: {
-              Authorization: `Bearer ${denoToken}`,
-              Accept: "application/json",
-              "X-Deno-Org": org,
-            },
-          });
-
-          if (!response.ok) {
-            const body = await response.text();
-            throw new Error(`Failed to fetch revision timelines for '${revisionId}' (${response.status}): ${body}`);
-          }
-
-          const timelines = await response.json();
-          const branchTimelines = [];
-
-          function extractBranchName(timeline) {
-            const candidates = [
-              timeline?.slug,
-              timeline?.partition?.timeline,
-              timeline?.partition?.branch,
-              timeline?.partition?.git_branch,
-              timeline?.partition?.ref,
-            ].filter(Boolean);
-
-            for (const candidate of candidates) {
-              const value = String(candidate);
-              if (value.startsWith("git-branch/")) {
-                return value.slice("git-branch/".length);
-              }
-            }
-
-            return null;
-          }
-
-          for (const timeline of timelines) {
-            const branch = extractBranchName(timeline);
-            const domain = timeline?.domains?.[0]?.domain;
-            if (!branch || !domain) {
-              continue;
-            }
-
-            branchTimelines.push({
-              branch,
-              domain: domain.startsWith("http://") || domain.startsWith("https://") ? domain : `https://${domain}`,
-              timelineSlug: timeline.slug,
-            });
-          }
-
-          const uniqueBranches = [...new Map(branchTimelines.map((entry) => [entry.branch, entry])).values()]
-            .sort((left, right) => left.branch.localeCompare(right.branch));
-
-          if (uniqueBranches.length === 0) {
-            core.notice(`No git-branch timelines were routed for revision '${revisionId}'.`);
-            return;
-          }
-
-          const { owner, repo } = context.repo;
-          const { data: repository } = await github.rest.repos.get({ owner, repo });
-          const defaultBranch = repository.default_branch;
-
-          async function getRefSha(branch) {
-            try {
-              const { data } = await github.rest.git.getRef({
-                owner,
-                repo,
-                ref: `heads/${branch}`,
-              });
-              return data.object.sha;
-            } catch (error) {
-              if (error.status !== 404) {
-                throw error;
-              }
-
-              const { data } = await github.rest.git.getRef({
-                owner,
-                repo,
-                ref: `heads/${defaultBranch}`,
-              });
-              core.warning(`Source ref '${branch}' was not found, using '${defaultBranch}' as the dist branch base.`);
-              return data.object.sha;
-            }
-          }
-
-          async function ensureArtifactBranch(branch) {
-            const artifactRef = `dist/${branch}`;
-
-            try {
-              await github.rest.git.getRef({ owner, repo, ref: `heads/${artifactRef}` });
-              return artifactRef;
-            } catch (error) {
-              if (error.status !== 404) {
-                throw error;
-              }
-            }
-
-            const baseSha = await getRefSha(branch);
-            try {
-              await github.rest.git.createRef({
-                owner,
-                repo,
-                ref: `refs/heads/${artifactRef}`,
-                sha: baseSha,
-              });
-              core.notice(`Created artifact branch '${artifactRef}'.`);
-            } catch (error) {
-              if (error.status !== 422) {
-                throw error;
-              }
-              core.info(`Artifact branch '${artifactRef}' was created concurrently.`);
-            }
-
-            return artifactRef;
-          }
-
-          async function getManifestFromRef(ref) {
-            try {
-              const { data } = await github.rest.repos.getContent({
-                owner,
-                repo,
-                path: "manifest.json",
-                ref,
-              });
-              if (Array.isArray(data)) {
-                return null;
-              }
-
-              return {
-                sha: data.sha,
-                content: Buffer.from(data.content, data.encoding || "base64").toString("utf8"),
-              };
-            } catch (error) {
-              if (error.status === 404) {
-                return null;
-              }
-              throw error;
-            }
-          }
-
-          async function getSourceManifest(branch) {
-            return await getManifestFromRef(branch) ?? await getManifestFromRef(defaultBranch);
-          }
-
-          function updateManifest(content, homepageUrl) {
-            const manifest = JSON.parse(content);
-            manifest.homepage_url = homepageUrl;
-            return `${JSON.stringify(manifest, null, 2)}\n`;
-          }
-
-          for (const entry of uniqueBranches) {
-            const sourceManifest = await getSourceManifest(entry.branch);
-            if (!sourceManifest) {
-              core.warning(`manifest.json was not found on '${entry.branch}' or '${defaultBranch}', skipping '${entry.branch}'.`);
-              continue;
-            }
-
-            const artifactRef = await ensureArtifactBranch(entry.branch);
-            const nextContent = updateManifest(sourceManifest.content, entry.domain);
-            const existingArtifactManifest = await getManifestFromRef(artifactRef);
-
-            if (existingArtifactManifest?.content === nextContent) {
-              core.info(`manifest.json is unchanged on '${artifactRef}', skipping commit.`);
-              continue;
-            }
-
-            await github.rest.repos.createOrUpdateFileContents({
-              owner,
-              repo,
-              path: "manifest.json",
-              branch: artifactRef,
-              message: `chore: [skip ci] publish manifest for ${entry.branch}`,
-              content: Buffer.from(nextContent, "utf8").toString("base64"),
-              ...(existingArtifactManifest?.sha ? { sha: existingArtifactManifest.sha } : {}),
-            });
-
-            core.notice(`Published manifest.json to '${artifactRef}' using '${entry.domain}'.`);
-          }
+          --allow-read="$ACTION_PATH,$GITHUB_WORKSPACE" \
+          --allow-write="$GITHUB_OUTPUT" \
+          --allow-run=git \
+          --allow-net=api.deno.com,api.github.com \
+          "$ACTION_PATH/scripts/provision.js"
 
     - name: Delete paired dist branch
       if: ${{ steps.resolve.outputs.action_mode == 'delete' && steps.resolve.outputs.should_skip != 'true' }}
-      uses: actions/github-script@v7
-      with:
-        github-token: ${{ steps.app-token.outputs.token || env.GITHUB_TOKEN || github.token }}
-        script: |
-          const artifactRef = process.env.ARTIFACT_REF;
-          if (!artifactRef) {
-            core.notice("No artifact branch was resolved for this delete event.");
-            return;
-          }
-
-          const { owner, repo } = context.repo;
-
-          function isBranchNotFound(error) {
-            if (!error || typeof error !== "object") {
-              return false;
-            }
-            if (error.status === 404) {
-              return true;
-            }
-            if (error.status !== 422) {
-              return false;
-            }
-            const message = error?.response?.data?.message || error?.message || "";
-            return /reference .*does not exist/i.test(message);
-          }
-
-          try {
-            await github.rest.git.deleteRef({
-              owner,
-              repo,
-              ref: `heads/${artifactRef}`,
-            });
-            core.notice(`Deleted artifact branch '${artifactRef}'.`);
-          } catch (error) {
-            if (isBranchNotFound(error)) {
-              core.warning(`Artifact branch '${artifactRef}' was already absent.`);
-              return;
-            }
-            throw error;
-          }
+      shell: bash
       env:
+        ACTION_PATH: ${{ github.action_path }}
         ARTIFACT_REF: ${{ steps.resolve.outputs.artifact_ref }}
+        GITHUB_OWNER: ${{ github.repository_owner }}
+        GITHUB_REPO: ${{ github.event.repository.name }}
+        GITHUB_TOKEN: ${{ steps.app-token.outputs.token || env.GITHUB_TOKEN || github.token }}
+      run: |
+        set -euo pipefail
+
+        deno run \
+          --allow-env \
+          --allow-read="$ACTION_PATH" \
+          --allow-net=api.github.com \
+          "$ACTION_PATH/scripts/delete_dist_branch.js"

@@ -7,6 +7,7 @@ Provisions a Deno Deploy app through API v2, deploys git-tracked repository asse
 - One Deno Deploy app is managed per repository.
 - App management, env sync, deploys, revision polling, and timeline lookups use the public Deno API v2.
 - `provision` creates or updates the app, deploys the current checkout, waits for the revision, and publishes the routed revision URL to `manifest.json.homepage_url` on `dist/<branch>` inline.
+- Successful `provision` runs append a job-summary reminder that links to the Deno app settings page for GitHub linking.
 - `delete` only removes the paired `dist/*` branch. It never deletes the Deno app.
 - API-driven preview deploys currently expose routed revision URLs rather than GitHub `git-branch/*` timelines, so preview `homepage_url` values are revision-scoped.
 
@@ -30,6 +31,12 @@ Provisions a Deno Deploy app through API v2, deploys git-tracked repository asse
 - All other branches sync variables to the shared `preview` context.
 - Non-default branches share one preview context, so later runs can replace preview-scoped values from earlier runs.
 - Reserved `DENO_*` names are excluded automatically before env sync.
+
+## Summary Link
+
+- After a successful `provision`, the action runs `deno deploy switch --app <resolved-app>` in the checked-out workspace and appends a settings URL to the GitHub Actions job summary.
+- This can create or update `deno.jsonc` in the workspace. The action does not restore that file afterward.
+- If summary generation fails, provisioning still succeeds and the reminder is skipped.
 
 ## Requirements
 

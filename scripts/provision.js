@@ -1,5 +1,6 @@
 import { join } from "jsr:@std/path@1.1.2";
-import { error, info, notice, setOutput, warning } from "./lib/actions.js";
+import { parse as parseJsonc } from "jsr:@std/jsonc";
+import { appendSummary, error, info, notice, setOutput, warning } from "./lib/actions.js";
 import {
   getBooleanOption,
   getIntegerOption,
@@ -182,6 +183,33 @@ function updateManifestHomepage(content, homepageUrl) {
   const manifest = JSON.parse(content);
   manifest.homepage_url = homepageUrl;
   return `${JSON.stringify(manifest, null, 2)}\n`;
+}
+
+async function inferDenoSettingsUrl({ repoRoot, token, appSlug }) {
+  const command = new Deno.Command("deno", {
+    args: ["deploy", "switch", "--token", token, "--app", appSlug],
+    cwd: repoRoot,
+    stdout: "piped",
+    stderr: "piped",
+  });
+  const { code, stderr, stdout } = await command.output();
+  if (code !== 0) {
+    const message = new TextDecoder().decode(stderr).trim() || new TextDecoder().decode(stdout).trim();
+    throw new Error(message || "deno deploy switch failed.");
+  }
+
+  const configPath = join(repoRoot, "deno.jsonc");
+  const configText = await Deno.readTextFile(configPath);
+  const config = parseJsonc(configText);
+  const organization = config?.deploy?.org;
+  const inferredApp = config?.deploy?.app;
+
+  if (typeof organization !== "string" || !organization) {
+    throw new Error(`Unable to resolve 'deploy.org' from '${configPath}'.`);
+  }
+
+  const targetApp = typeof inferredApp === "string" && inferredApp ? inferredApp : appSlug;
+  return `https://console.deno.com/${organization}/${targetApp}/settings`;
 }
 
 async function waitForRevision({ deno, revisionId, timeoutMs, intervalMs }) {
@@ -385,6 +413,17 @@ async function main() {
   }
 
   notice(`Revision '${settledRevision.id}' succeeded.`);
+
+  try {
+    const settingsUrl = await inferDenoSettingsUrl({
+      repoRoot,
+      token,
+      appSlug,
+    });
+    await appendSummary(`Link the project to GitHub if not done already: ${settingsUrl}`);
+  } catch (summaryError) {
+    warning(`Unable to append the Deno settings summary link: ${summaryError.message}`);
+  }
 
   const timelines = await deno.getRevisionTimelines(settledRevision.id);
   const homepageUrl = findTimelineDomain(timelines, {

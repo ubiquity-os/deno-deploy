@@ -197,8 +197,8 @@ runs:
         deno run \
           --allow-env \
           --allow-read="$ACTION_PATH,$GITHUB_WORKSPACE" \
-          --allow-write="$GITHUB_OUTPUT" \
-          --allow-run=git \
+          --allow-write="$GITHUB_OUTPUT${GITHUB_STEP_SUMMARY:+,$GITHUB_STEP_SUMMARY}" \
+          --allow-run=git,deno \
           --allow-net=api.deno.com,api.github.com \
           "$ACTION_PATH/scripts/provision.js"
 

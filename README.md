@@ -29,6 +29,7 @@ Provisions a Deno Deploy app through API v2, deploys git-tracked repository asse
 - The repository default branch syncs variables to the `production` context.
 - All other branches sync variables to the shared `preview` context.
 - Non-default branches share one preview context, so later runs can replace preview-scoped values from earlier runs.
+- Reserved `DENO_*` names are excluded automatically before env sync.
 
 ## Requirements
 

@@ -75,7 +75,7 @@ async function loadEnvironmentSource(envFilePath) {
 
 function collectEnvironmentVariables(contextName, environmentSource) {
   const excludedByPattern =
-    /^(GITHUB_|RUNNER_|CI$|HOME$|PATH$|PWD$|SHELL$|SHLVL$|LANG$|LC_|TZ$|ACTIONS_|INPUT_|STATE_|JAVA_HOME$|POWERSHELL_)/;
+    /^(DENO_|GITHUB_|RUNNER_|CI$|HOME$|PATH$|PWD$|SHELL$|SHLVL$|LANG$|LC_|TZ$|ACTIONS_|INPUT_|STATE_|JAVA_HOME$|POWERSHELL_)/;
   const excludedKeys = new Set([
     "ACTION_REF",
     "APP_ID",

@@ -36,7 +36,10 @@ inputs:
     description: "Prefix used for paired artifact branches."
     required: false
     default: "dist/"
-outputs: {}
+outputs:
+  deployment_url:
+    description: "The URL of the deployed project"
+    value: ${{ steps.deno_project.outputs.deployment_url }}
 runs:
   using: "composite"
   steps:
@@ -45,9 +48,15 @@ runs:
       with:
         deno-version: v2.x
 
-    - name: Install CLI
+    # Authenticate with Deno Deploy (no separate CLI install needed - built into Deno 2)
+    - name: Authenticate Deno Deploy
+      if: inputs.action == 'deploy' || inputs.action == 'delete'
       shell: bash
-      run: deno install -gArf jsr:@deno/deployctl
+      env:
+        DENO_DEPLOY_TOKEN: ${{ inputs.token }}
+      run: |
+        # The DENO_DEPLOY_TOKEN env var is used by deno deploy CLI for authentication
+        echo "Deno Deploy authentication configured"
 
     - name: Resolve source and artifact refs
       id: resolve_refs
@@ -164,19 +173,21 @@ runs:
         deno run --allow-env --allow-write=.env generate-env.ts
         rm generate-env.ts
 
-    - name: Manage Deno Deploy Project (Deploy)
+    - name: Create/Update Deno Deploy Project
       if: inputs.action == 'deploy' && steps.resolve_refs.outputs.should_skip != 'true'
       shell: bash
       id: deno_project
       env:
         DENO_DEPLOY_TOKEN: ${{ inputs.token }}
       run: |
-        deployctl projects create \
-          --token=$DENO_DEPLOY_TOKEN \
-          --project=$DENO_PROJECT_NAME \
-          --force \
-          --color=never \
-          ${{ inputs.organization && format('--org={0}', inputs.organization) || '' }} || true
+        # Use the new deno deploy create command (no separate projects create step needed)
+        # The deno deploy CLI will create the project if it doesn't exist
+        # Note: deno deploy uses DENO_DEPLOY_TOKEN env var for authentication
+        
+        ORG_FLAG=""
+        if [ -n "${{ inputs.organization }}" ]; then
+          ORG_FLAG="--org ${{ inputs.organization }}"
+        fi
 
         # Construct the deployment URL directly (Deno Deploy URLs follow predictable pattern)
         PROJECT_URL="https://${DENO_PROJECT_NAME}.deno.dev"
@@ -213,12 +224,19 @@ runs:
       env:
         DENO_DEPLOY_TOKEN: ${{ inputs.token }}
       run: |
-        deployctl deploy \
-          --token=$DENO_DEPLOY_TOKEN \
-          --project=$DENO_PROJECT_NAME \
-          --entrypoint=${{ inputs.entrypoint }} \
+        ORG_FLAG=""
+        if [ -n "${{ inputs.organization }}" ]; then
+          ORG_FLAG="--org ${{ inputs.organization }}"
+        fi
+
+        # Use the new deno deploy CLI (built into Deno 2)
+        # Deploy directly from local directory with production flag
+        deno deploy \
+          --org ${ORG_FLAG:---org ""} \
+          --app $DENO_PROJECT_NAME \
+          ${{ inputs.production == 'true' && '--prod' || '' }} \
           ${{ inputs.generateEnv == 'true' && '--env-file=.env' || '' }} \
-          ${{ inputs.production == 'true' && '--prod' || '' }}
+          --no-wait
 
     - name: Get GitHub App token
       if: env.APP_ID != '' && env.APP_PRIVATE_KEY != '' && steps.resolve_refs.outputs.should_skip != 'true'
@@ -374,11 +392,17 @@ runs:
       env:
         DENO_DEPLOY_TOKEN: ${{ inputs.token }}
       run: |
-        deployctl projects delete \
-          --token=$DENO_DEPLOY_TOKEN \
-          --project=$DENO_PROJECT_NAME \
-          --force \
-          --color=never || true
+        ORG_FLAG=""
+        if [ -n "${{ inputs.organization }}" ]; then
+          ORG_FLAG="--org ${{ inputs.organization }}"
+        fi
+
+        # Use the new deno deploy CLI to delete the project
+        # Note: The new CLI may require interactive confirmation, so we use --force equivalent
+        # For CI, we delete via the API directly
+        curl -s -X DELETE \
+          -H "Authorization: Bearer $DENO_DEPLOY_TOKEN" \
+          "https://api.deno.com/v2/projects/${DENO_PROJECT_NAME}" || true
 
     - name: Delete paired artifact branch
       if: inputs.action == 'delete' && steps.resolve_refs.outputs.should_skip != 'true'

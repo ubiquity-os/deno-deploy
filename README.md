@@ -1,6 +1,8 @@
 # deno-deploy
 
-Deploys a plugin to Deno and keeps generated `manifest.json` updates on paired artifact branches.
+Deploys a plugin to Deno (new platform at [console.deno.com](https://console.deno.com)) and keeps generated `manifest.json` updates on paired artifact branches.
+
+> **Note:** This action has been upgraded to use the new Deno Deploy platform. Deno Deploy Classic (dash.deno.com) is being sunset on July 20, 2026. See the [migration guide](https://docs.deno.com/deploy/migration_guide/) for details.
 
 ## Artifact branch model
 
@@ -16,6 +18,7 @@ Deploys a plugin to Deno and keeps generated `manifest.json` updates on paired a
 - Imports should not be shortened (for example `./myFolder/index` instead of `./myFolder`).
 - There should be an entrypoint for `fetch`, exported as default.
 - Node imports must be explicit (for example `import { Buffer } from "node:buffer"`).
+- Uses Deno 2 with native Node.js compatibility - no deno-node adapter step required.
 
 ## Key inputs
 

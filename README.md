@@ -42,7 +42,7 @@ Provisions GitHub-linked Deno Deploy apps, syncs Deno environment variables, and
 The action treats the Deno dashboard config as the source of truth. It applies:
 
 - `install`: `deno install`
-- `build`: `deno deploy switch --token "$PLUGIN_MANIFEST_SWITCH_TOKEN" --app "$DENO_DEPLOY_APPLICATION_SLUG" && deno x -y @ubiquity-os/plugin-manifest-tool@latest`
+- `build`: `APP_SLUG="${DENO_DEPLOY_APPLICATION_SLUG:-${DENO_DEPLOY_APP_SLUG:-}}"; if [ -z "$APP_SLUG" ]; then echo "Missing Deno app slug in build environment. Expected DENO_DEPLOY_APPLICATION_SLUG or DENO_DEPLOY_APP_SLUG."; exit 1; fi; deno deploy switch --token "$PLUGIN_MANIFEST_SWITCH_TOKEN" --app "$APP_SLUG" && deno x -y @ubiquity-os/plugin-manifest-tool@latest`
 - `predeploy`: `deno install`
 
 Do not commit a `deploy` block in tracked `deno.json` or `deno.jsonc`. `provision` will fail fast if it finds one, because source config would override the action-managed dashboard config.

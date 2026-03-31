@@ -148,6 +148,19 @@ async function readWorkspaceManifest(repoRoot) {
   }
 }
 
+function manifestHasHomepageUrl(content) {
+  if (!content) {
+    return false;
+  }
+
+  try {
+    const manifest = JSON.parse(content);
+    return typeof manifest?.homepage_url === "string" && manifest.homepage_url.trim() !== "";
+  } catch {
+    return false;
+  }
+}
+
 async function runCommand({ command, args, cwd, env = {}, description }) {
   const process = new Deno.Command(command, {
     args,
@@ -341,7 +354,10 @@ async function publishManifestArtifact({
   const manifestContent = await readWorkspaceManifest(repoRoot);
   if (!manifestContent) {
     notice("manifest.json was not found in the workspace. Skipping dist branch publication.");
-    return null;
+    return {
+      artifactBranch: null,
+      hasHomepageUrl: false,
+    };
   }
 
   await ensureArtifactBranch({
@@ -354,7 +370,10 @@ async function publishManifestArtifact({
   const existing = await github.getFile("manifest.json", artifactBranch);
   if (existing?.content === manifestContent) {
     info(`manifest.json is unchanged on '${artifactBranch}'.`);
-    return artifactBranch;
+    return {
+      artifactBranch,
+      hasHomepageUrl: manifestHasHomepageUrl(manifestContent),
+    };
   }
 
   await github.putFile({
@@ -366,7 +385,10 @@ async function publishManifestArtifact({
   });
 
   notice(`Published manifest.json to '${artifactBranch}'.`);
-  return artifactBranch;
+  return {
+    artifactBranch,
+    hasHomepageUrl: manifestHasHomepageUrl(manifestContent),
+  };
 }
 
 function redactEnvVars(envVars) {
@@ -397,6 +419,37 @@ function summarizeDryRun({
     ...patchPayload,
     env_vars: redactEnvVars(patchPayload.env_vars || []),
   }, null, 2)}`);
+}
+
+async function appendProvisionSummary({
+  createdApp,
+  artifactBranch,
+  hasHomepageUrl,
+  settingsUrl,
+}) {
+  const lines = [];
+
+  if (createdApp) {
+    lines.push(
+      "Bootstrapped a new Deno app with local source. This first provision run does not create a routed branch URL.",
+    );
+  }
+
+  if (artifactBranch && !hasHomepageUrl) {
+    lines.push(
+      `Published baseline manifest to \`${artifactBranch}\` without \`homepage_url\`. This is expected until the app is linked to GitHub in Deno and a later routed build triggers \`publish-manifest\` on the repo default branch.`,
+    );
+  }
+
+  if (settingsUrl) {
+    lines.push(`Link this Deno app to GitHub to enable automated builds: ${settingsUrl}`);
+  }
+
+  if (lines.length === 0) {
+    return;
+  }
+
+  await appendSummary(lines.map((line) => `- ${line}`).join("\n"));
 }
 
 async function main() {
@@ -471,6 +524,7 @@ async function main() {
   });
 
   const existingApp = await deno.getApp(appSlug);
+  let createdApp = false;
   let effectiveOrganization = organization;
   if (!existingApp) {
     if (!effectiveOrganization) {
@@ -489,6 +543,10 @@ async function main() {
       entrypoint,
       repository,
     });
+    createdApp = true;
+    notice(
+      "First-time bootstrap completed. homepage_url will remain empty until the app is linked to GitHub in Deno and a later routed build updates the dist manifest.",
+    );
   } else {
     notice(`Updating Deno app '${appSlug}'.`);
   }
@@ -496,7 +554,7 @@ async function main() {
   await deno.patchApp(appSlug, patchPayload);
   await setOutput("app_slug", appSlug);
 
-  await publishManifestArtifact({
+  const manifestPublishResult = await publishManifestArtifact({
     github,
     repoRoot,
     sourceBranch: refName,
@@ -504,16 +562,29 @@ async function main() {
     artifactBranch,
   });
 
+  if (manifestPublishResult?.artifactBranch && !manifestPublishResult.hasHomepageUrl) {
+    notice(
+      `The published manifest on '${manifestPublishResult.artifactBranch}' does not include homepage_url yet. publish-manifest will add the stable branch URL after Deno emits deno_deploy.build.routed.`,
+    );
+  }
+
+  let settingsUrl = null;
   try {
-    const settingsUrl = await inferDenoSettingsUrl({
+    settingsUrl = await inferDenoSettingsUrl({
       repoRoot,
       token,
       appSlug,
     });
-    await appendSummary(`Link this Deno app to GitHub to enable automated builds: ${settingsUrl}`);
   } catch (summaryError) {
     warning(`Unable to append the Deno settings summary link: ${summaryError.message}`);
   }
+
+  await appendProvisionSummary({
+    createdApp,
+    artifactBranch: manifestPublishResult?.artifactBranch || null,
+    hasHomepageUrl: Boolean(manifestPublishResult?.hasHomepageUrl),
+    settingsUrl,
+  });
 }
 
 try {

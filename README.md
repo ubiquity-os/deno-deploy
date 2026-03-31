@@ -9,6 +9,7 @@ Provisions Deno Deploy apps, syncs Deno environment variables, and maintains `di
 - `publish-manifest` handles `repository_dispatch` `deno_deploy.build.routed` events and only updates `homepage_url` in the already-published `dist/<branch>/manifest.json`.
 - `delete` only removes the paired `dist/<branch>` branch. It never deletes the Deno app.
 - Successful `provision` runs append a Deno settings link to the GitHub Actions job summary so the app can be linked to GitHub for automated Deno builds.
+- The first bootstrap run for a newly created app is expected to leave `homepage_url` empty until the app is linked to GitHub in Deno and a later routed build completes.
 
 ## Inputs
 
@@ -63,6 +64,7 @@ This can create or update `manifest.json`, `deno.jsonc`, `node_modules`, and rel
 - Grant `contents: write` so the action can create/update `dist/*` branches.
 - Use a Deno Deploy token with access to the target organization.
 - Link the created app to GitHub in the Deno UI before expecting automated Deno branch builds and routed `publish-manifest` events.
+- Keep the `repository_dispatch` / `publish-manifest` workflow on the consumer repo's default branch. GitHub only runs repository dispatch workflows from the default branch.
 
 ## Example Workflow
 

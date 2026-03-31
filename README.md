@@ -40,8 +40,8 @@ Provisions GitHub-linked Deno Deploy apps, syncs Deno environment variables, and
 
 The action treats the Deno dashboard config as the source of truth. It applies:
 
-- `install`: `deno install`
-- `build`: `deno eval -A "const root = Deno.cwd(); const decoder = new TextDecoder(); const headProcess = await new Deno.Command('git', { args: ['-C', root, 'rev-parse', 'HEAD'], stdout: 'piped', stderr: 'null' }).output(); const head = decoder.decode(headProcess.stdout).trim(); let ref = ''; if (head) { const remoteProcess = await new Deno.Command('git', { args: ['-C', root, 'ls-remote', '--heads', 'origin'], stdout: 'piped', stderr: 'null' }).output(); const match = decoder.decode(remoteProcess.stdout).split(/\\r?\\n/).find((line) => line.startsWith(head + '\\t')); if (match) ref = match.split('\\t')[1].replace(/^refs\\/heads\\//, ''); } if (ref) console.log('Resolved manifest ref: ' + ref); const manifestProcess = new Deno.Command('deno', { args: ['x', '-y', '@ubiquity-os/plugin-manifest-tool@latest'], env: ref ? { PLUGIN_MANIFEST_REF_NAME: ref } : {}, stdout: 'inherit', stderr: 'inherit' }); const result = await manifestProcess.output(); Deno.exit(result.code);"`
+- `install`: repo-specific `deno eval ...` command that resolves the checked-out branch from local refs first, falls back to GitHub's `branches-where-head` API for the current commit, then runs `deno install` with `PLUGIN_MANIFEST_REPOSITORY`, `PLUGIN_MANIFEST_PRODUCTION_BRANCH=main`, and `PLUGIN_MANIFEST_REF_NAME` injected into the child environment.
+- `build`: repo-specific `deno eval ...` command that uses the same branch resolution flow and then runs `deno x -y @ubiquity-os/plugin-manifest-tool@1.3.0 --repository <owner>/<repo> --production-branch main [--ref-name <branch>]`, while still injecting the same manifest env for compatibility.
 - `predeploy`: `deno install`
 
 Do not commit a `deploy` block in tracked `deno.json` or `deno.jsonc`. `provision` will fail fast if it finds one, because source config would override the action-managed dashboard config.

@@ -3,6 +3,15 @@ import { getStringOption, parseArgs, requireString } from "./lib/cli.js";
 import { DenoApiClient } from "./lib/deno_api.js";
 import { GitHubApiClient } from "./lib/github_api.js";
 
+function sanitizeBranchRefName(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-{2,}/g, "-");
+}
+
 function extractTimelineBranch(timeline) {
   const candidates = [
     timeline?.partition?.["git.branch"],
@@ -65,12 +74,47 @@ function collectManifestTargets(timelines, productionBranch) {
   return targets;
 }
 
+async function resolveArtifactBranch(github, branch) {
+  const directArtifactBranch = `dist/${branch}`;
+  if (await github.getFile("manifest.json", directArtifactBranch)) {
+    return directArtifactBranch;
+  }
+
+  const expectedSlug = sanitizeBranchRefName(branch);
+  if (!expectedSlug) {
+    return directArtifactBranch;
+  }
+
+  const refs = await github.listMatchingRefs("heads/dist/");
+  const matches = refs
+    .map((ref) => String(ref.ref || "").replace(/^refs\/heads\/dist\//, ""))
+    .filter(Boolean)
+    .filter((candidate) => {
+      const candidateSlug = sanitizeBranchRefName(candidate);
+      return candidateSlug === expectedSlug || candidateSlug.startsWith(expectedSlug);
+    });
+
+  if (matches.length === 1) {
+    const resolvedArtifactBranch = `dist/${matches[0]}`;
+    notice(`Resolved sanitized Deno branch '${branch}' to artifact branch '${resolvedArtifactBranch}'.`);
+    return resolvedArtifactBranch;
+  }
+
+  if (matches.length > 1) {
+    warning(
+      `Multiple dist branches matched sanitized Deno branch '${branch}': ${matches.join(", ")}. Falling back to '${directArtifactBranch}'.`,
+    );
+  }
+
+  return directArtifactBranch;
+}
+
 async function updatePublishedManifest({
   github,
   branch,
   homepageUrl,
 }) {
-  const artifactBranch = `dist/${branch}`;
+  const artifactBranch = await resolveArtifactBranch(github, branch);
   const existing = await github.getFile("manifest.json", artifactBranch);
   if (!existing) {
     warning(`No manifest.json was found on '${artifactBranch}'. Skipping homepage update.`);

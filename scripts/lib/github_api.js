@@ -73,6 +73,15 @@ export class GitHubApiClient {
     });
   }
 
+  async listMatchingRefs(ref) {
+    const normalizedRef = String(ref).split("/").map(encodeURIComponent).join("/");
+    const data = await this.request(`/repos/${this.owner}/${this.repo}/git/matching-refs/${normalizedRef}`, {
+      expectedStatuses: [200],
+    });
+
+    return Array.isArray(data) ? data : [];
+  }
+
   async getFile(path, ref) {
     const response = await fetch(
       `${this.baseUrl}/repos/${this.owner}/${this.repo}/contents/${path}?ref=${encodeURIComponent(ref)}`,

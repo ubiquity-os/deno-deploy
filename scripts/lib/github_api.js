@@ -2,6 +2,10 @@ import { encodeBase64, decodeBase64 } from "jsr:@std/encoding@1.0.10/base64";
 
 const DEFAULT_GITHUB_API_BASE_URL = "https://api.github.com";
 
+function normalizeRefPath(ref) {
+  return String(ref).split("/").map(encodeURIComponent).join("/");
+}
+
 export class GitHubApiClient {
   constructor({ token, owner, repo, baseUrl = DEFAULT_GITHUB_API_BASE_URL }) {
     this.token = token;
@@ -52,7 +56,7 @@ export class GitHubApiClient {
   }
 
   getRef(ref) {
-    return this.request(`/repos/${this.owner}/${this.repo}/git/ref/${encodeURIComponent(ref)}`, {
+    return this.request(`/repos/${this.owner}/${this.repo}/git/ref/${normalizeRefPath(ref)}`, {
       expectedStatuses: [200],
     });
   }
@@ -74,8 +78,7 @@ export class GitHubApiClient {
   }
 
   async listMatchingRefs(ref) {
-    const normalizedRef = String(ref).split("/").map(encodeURIComponent).join("/");
-    const data = await this.request(`/repos/${this.owner}/${this.repo}/git/matching-refs/${normalizedRef}`, {
+    const data = await this.request(`/repos/${this.owner}/${this.repo}/git/matching-refs/${normalizeRefPath(ref)}`, {
       expectedStatuses: [200],
     });
 
@@ -133,7 +136,7 @@ export class GitHubApiClient {
   }
 
   deleteRef(ref) {
-    return this.request(`/repos/${this.owner}/${this.repo}/git/refs/${encodeURIComponent(ref)}`, {
+    return this.request(`/repos/${this.owner}/${this.repo}/git/refs/${normalizeRefPath(ref)}`, {
       method: "DELETE",
       expectedStatuses: [204],
     });

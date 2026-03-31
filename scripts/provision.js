@@ -292,8 +292,11 @@ async function createGitHubLinkedApp({
 async function inferDenoSettingsUrl({ repoRoot, token, appSlug }) {
   await runCommand({
     command: "deno",
-    args: ["deploy", "switch", "--token", token, "--app", appSlug],
+    args: ["deploy", "switch", "--app", appSlug],
     cwd: repoRoot,
+    env: {
+      DENO_DEPLOY_TOKEN: token,
+    },
     description: "deno deploy switch",
   });
 

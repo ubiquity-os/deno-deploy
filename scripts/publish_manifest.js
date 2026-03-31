@@ -44,7 +44,12 @@ function normalizeDomain(domain) {
 }
 
 function updateManifestHomepage(content, homepageUrl) {
-  const manifest = JSON.parse(content);
+  let manifest;
+  try {
+    manifest = JSON.parse(content);
+  } catch (error) {
+    throw new Error(`Invalid JSON in manifest.json: ${error.message}`);
+  }
   manifest.homepage_url = homepageUrl;
   return `${JSON.stringify(manifest, null, 2)}\n`;
 }
@@ -86,13 +91,14 @@ async function resolveArtifactBranch(github, branch) {
   }
 
   const refs = await github.listMatchingRefs("heads/dist/");
-  const matches = refs
+  const candidates = refs
     .map((ref) => String(ref.ref || "").replace(/^refs\/heads\/dist\//, ""))
-    .filter(Boolean)
-    .filter((candidate) => {
-      const candidateSlug = sanitizeBranchRefName(candidate);
-      return candidateSlug === expectedSlug || candidateSlug.startsWith(expectedSlug);
-    });
+    .filter(Boolean);
+  const exactMatches = candidates.filter((candidate) => sanitizeBranchRefName(candidate) === expectedSlug);
+  const prefixMatches = exactMatches.length > 0
+    ? exactMatches
+    : candidates.filter((candidate) => sanitizeBranchRefName(candidate).startsWith(expectedSlug));
+  const matches = prefixMatches;
 
   if (matches.length === 1) {
     const resolvedArtifactBranch = `dist/${matches[0]}`;

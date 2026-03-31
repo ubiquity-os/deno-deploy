@@ -29,7 +29,7 @@ export async function listTrackedFiles(repoRoot) {
 
 export async function collectAssets(repoRoot) {
   const trackedFiles = await listTrackedFiles(repoRoot);
-  const assets = {};
+  const assets = Object.create(null);
 
   for (const relativePath of trackedFiles) {
     const absolutePath = join(repoRoot, relativePath);

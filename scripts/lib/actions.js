@@ -21,8 +21,9 @@ export async function setOutput(name, value) {
   }
 
   const serialized = String(value ?? "");
-  const line = `${name}=${serialized.replace(/\r?\n/g, "%0A")}\n`;
-  await Deno.writeTextFile(outputPath, line, { append: true });
+  const delimiter = `EOF_${crypto.randomUUID()}`;
+  const block = `${name}<<${delimiter}\n${serialized}\n${delimiter}\n`;
+  await Deno.writeTextFile(outputPath, block, { append: true });
 }
 
 export async function appendSummary(markdown) {

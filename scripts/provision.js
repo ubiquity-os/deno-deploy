@@ -284,6 +284,65 @@ async function createDenoApp({
   });
 }
 
+async function bootstrapProductionDeployment({
+  repoRoot,
+  token,
+  organization,
+  appSlug,
+  entrypoint,
+}) {
+  const nodeModulesPath = join(repoRoot, "node_modules");
+  const bootstrapConfigPath = join(repoRoot, ".deno-bootstrap.jsonc");
+  try {
+    const nodeModulesInfo = await Deno.stat(nodeModulesPath);
+    if (nodeModulesInfo.isDirectory) {
+      notice("Removing node_modules before the explicit bootstrap deploy so Deno uploads only the workspace source.");
+      await Deno.remove(nodeModulesPath, { recursive: true });
+    }
+  } catch (caughtError) {
+    if (!(caughtError instanceof Deno.errors.NotFound)) {
+      throw caughtError;
+    }
+  }
+
+  await Deno.writeTextFile(
+    bootstrapConfigPath,
+    `${JSON.stringify({
+      deploy: {
+        org: organization,
+        app: appSlug,
+        entrypoint,
+      },
+    }, null, 2)}\n`,
+  );
+
+  try {
+    await runCommand({
+      command: "deno",
+      args: [
+        "deploy",
+        ".",
+        "--config",
+        bootstrapConfigPath,
+        "--prod",
+      ],
+      cwd: repoRoot,
+      env: {
+        DENO_DEPLOY_TOKEN: token,
+      },
+      description: `bootstrap production deploy for Deno app '${appSlug}'`,
+    });
+  } finally {
+    try {
+      await Deno.remove(bootstrapConfigPath);
+    } catch (caughtError) {
+      if (!(caughtError instanceof Deno.errors.NotFound)) {
+        throw caughtError;
+      }
+    }
+  }
+}
+
 async function inferDenoSettingsUrl({ repoRoot, token, appSlug }) {
   await runCommand({
     command: "deno",
@@ -412,6 +471,7 @@ function summarizeDryRun({
   info(`Build environment variable count: ${buildEnvVars.length}`);
   if (organization) {
     info(`Create flow: deno deploy create --source local ... --org ${organization} --app ${appSlug}`);
+    info(`First-create bootstrap deploy: deno deploy . --config .deno-bootstrap.jsonc --prod`);
   } else {
     info("Create flow: organization was not provided, so provision will try to infer it from the token using an accessible Deno app.");
   }
@@ -553,6 +613,18 @@ async function main() {
 
   await deno.patchApp(appSlug, patchPayload);
   await setOutput("app_slug", appSlug);
+
+  if (createdApp) {
+    notice(`Running an explicit production bootstrap deploy for '${appSlug}'.`);
+    await bootstrapProductionDeployment({
+      repoRoot,
+      token,
+      organization: effectiveOrganization,
+      appSlug,
+      entrypoint,
+    });
+    notice(`Completed the explicit production bootstrap deploy for '${appSlug}'.`);
+  }
 
   const manifestPublishResult = await publishManifestArtifact({
     github,

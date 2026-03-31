@@ -5,11 +5,11 @@ Provisions Deno Deploy apps, syncs Deno environment variables, and maintains `di
 ## Behavior
 
 - One Deno Deploy app is managed per repository.
-- `provision` creates a missing Deno app with a one-time local-source bootstrap, patches dashboard build/runtime config, syncs runtime and build env vars, generates `manifest.json` in GitHub Actions, and publishes it to `dist/<branch>`.
+- `provision` creates a missing Deno app with a one-time local-source bootstrap, patches dashboard build/runtime config, syncs runtime and build env vars, runs one explicit production bootstrap deploy from the current workspace, generates `manifest.json` in GitHub Actions, and publishes it to `dist/<branch>`.
 - `publish-manifest` handles `repository_dispatch` `deno_deploy.build.routed` events and only updates `homepage_url` in the already-published `dist/<branch>/manifest.json`.
 - `delete` only removes the paired `dist/<branch>` branch. It never deletes the Deno app.
 - Successful `provision` runs append a Deno settings link to the GitHub Actions job summary so the app can be linked to GitHub for automated Deno builds.
-- The first bootstrap run for a newly created app is expected to leave `homepage_url` empty until the app is linked to GitHub in Deno and a later routed build completes.
+- The first bootstrap run for a newly created app now attempts one explicit production deploy, but `homepage_url` in `dist/*` can still remain empty until the app is linked to GitHub in Deno and a later routed build completes.
 
 ## Inputs
 
@@ -52,11 +52,12 @@ Do not commit a `deploy` block in tracked `deno.json` or `deno.jsonc`. `provisio
 During `provision`, the action runs:
 
 - `deno deploy create --source local ...` when the app does not exist yet
+- `deno deploy . --config .deno-bootstrap.jsonc --prod` once after creating a missing app
 - `deno install`
 - `deno x -y @ubiquity-os/plugin-manifest-tool@latest`
 - `deno deploy switch --app <slug>` with `DENO_DEPLOY_TOKEN` in the child environment
 
-This can create or update `manifest.json`, `deno.jsonc`, `node_modules`, and related install artifacts in the checked-out workspace.
+This can create or update `manifest.json`, `deno.jsonc`, `.deno-bootstrap.jsonc`, `node_modules`, and related install artifacts in the checked-out workspace. Before the one-time bootstrap deploy, the action removes `node_modules` so Deno uploads only the workspace source, then deletes `.deno-bootstrap.jsonc` after the deploy attempt.
 
 ## Requirements
 

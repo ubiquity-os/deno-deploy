@@ -8,7 +8,7 @@ import { ensureArtifactBranch, GitHubApiClient } from "./lib/github_api.js";
 const APP_CONFIG = {
   install: "deno install",
   build:
-    'APP_SLUG="${DENO_DEPLOY_APPLICATION_SLUG:-${DENO_DEPLOY_APP_SLUG:-}}"; if [ -z "$APP_SLUG" ]; then echo "Missing Deno app slug in build environment. Expected DENO_DEPLOY_APPLICATION_SLUG or DENO_DEPLOY_APP_SLUG."; exit 1; fi; deno deploy switch --token "$PLUGIN_MANIFEST_SWITCH_TOKEN" --app "$APP_SLUG" && deno x -y @ubiquity-os/plugin-manifest-tool@latest',
+    `deno eval -A "const root = Deno.cwd(); const decoder = new TextDecoder(); const headProcess = await new Deno.Command('git', { args: ['-C', root, 'rev-parse', 'HEAD'], stdout: 'piped', stderr: 'null' }).output(); const head = decoder.decode(headProcess.stdout).trim(); let ref = ''; if (head) { const remoteProcess = await new Deno.Command('git', { args: ['-C', root, 'ls-remote', '--heads', 'origin'], stdout: 'piped', stderr: 'null' }).output(); const match = decoder.decode(remoteProcess.stdout).split(/\\\\r?\\\\n/).find((line) => line.startsWith(head + '\\\\t')); if (match) ref = match.split('\\\\t')[1].replace(/^refs\\\\/heads\\\\//, ''); } if (ref) console.log('Resolved manifest ref: ' + ref); const manifestProcess = new Deno.Command('deno', { args: ['x', '-y', '@ubiquity-os/plugin-manifest-tool@latest'], env: ref ? { PLUGIN_MANIFEST_REF_NAME: ref } : {}, stdout: 'inherit', stderr: 'inherit' }); const result = await manifestProcess.output(); Deno.exit(result.code);"`,
   predeploy: "deno install",
 };
 
@@ -101,7 +101,7 @@ function collectRuntimeEnvironmentVariables(contextName, environmentSource) {
 }
 
 function collectBuildEnvironmentVariables({ repository, token }) {
-  return [
+  const envVars = [
     {
       key: "PLUGIN_MANIFEST_PRODUCTION_BRANCH",
       value: "main",
@@ -114,13 +114,10 @@ function collectBuildEnvironmentVariables({ repository, token }) {
       secret: false,
       contexts: ["build"],
     },
-    {
-      key: "PLUGIN_MANIFEST_SWITCH_TOKEN",
-      value: token,
-      secret: true,
-      contexts: ["build"],
-    },
   ];
+
+  void token;
+  return envVars;
 }
 
 function buildConfig(entrypoint) {

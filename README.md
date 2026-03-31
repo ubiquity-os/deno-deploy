@@ -33,7 +33,6 @@ Provisions GitHub-linked Deno Deploy apps, syncs Deno environment variables, and
 - Build-only env vars are always synced so Deno-owned builds can regenerate manifests:
   - `PLUGIN_MANIFEST_REPOSITORY`
   - `PLUGIN_MANIFEST_PRODUCTION_BRANCH=main`
-  - `PLUGIN_MANIFEST_SWITCH_TOKEN`
 - `syncEnv: false` disables workflow runtime env upload only. The internal build metadata vars above are still managed.
 - Reserved `DENO_*` names from the workflow environment are excluded automatically.
 
@@ -42,7 +41,7 @@ Provisions GitHub-linked Deno Deploy apps, syncs Deno environment variables, and
 The action treats the Deno dashboard config as the source of truth. It applies:
 
 - `install`: `deno install`
-- `build`: `APP_SLUG="${DENO_DEPLOY_APPLICATION_SLUG:-${DENO_DEPLOY_APP_SLUG:-}}"; if [ -z "$APP_SLUG" ]; then echo "Missing Deno app slug in build environment. Expected DENO_DEPLOY_APPLICATION_SLUG or DENO_DEPLOY_APP_SLUG."; exit 1; fi; deno deploy switch --token "$PLUGIN_MANIFEST_SWITCH_TOKEN" --app "$APP_SLUG" && deno x -y @ubiquity-os/plugin-manifest-tool@latest`
+- `build`: `deno eval -A "const root = Deno.cwd(); const decoder = new TextDecoder(); const headProcess = await new Deno.Command('git', { args: ['-C', root, 'rev-parse', 'HEAD'], stdout: 'piped', stderr: 'null' }).output(); const head = decoder.decode(headProcess.stdout).trim(); let ref = ''; if (head) { const remoteProcess = await new Deno.Command('git', { args: ['-C', root, 'ls-remote', '--heads', 'origin'], stdout: 'piped', stderr: 'null' }).output(); const match = decoder.decode(remoteProcess.stdout).split(/\\r?\\n/).find((line) => line.startsWith(head + '\\t')); if (match) ref = match.split('\\t')[1].replace(/^refs\\/heads\\//, ''); } if (ref) console.log('Resolved manifest ref: ' + ref); const manifestProcess = new Deno.Command('deno', { args: ['x', '-y', '@ubiquity-os/plugin-manifest-tool@latest'], env: ref ? { PLUGIN_MANIFEST_REF_NAME: ref } : {}, stdout: 'inherit', stderr: 'inherit' }); const result = await manifestProcess.output(); Deno.exit(result.code);"`
 - `predeploy`: `deno install`
 
 Do not commit a `deploy` block in tracked `deno.json` or `deno.jsonc`. `provision` will fail fast if it finds one, because source config would override the action-managed dashboard config.

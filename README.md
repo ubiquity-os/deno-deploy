@@ -1,50 +1,69 @@
 # deno-deploy
 
-Provisions a Deno Deploy app through API v2, deploys git-tracked repository assets, syncs environment variables, and keeps `manifest.json` published on `dist/*` branches.
+Provisions GitHub-linked Deno Deploy apps, syncs Deno environment variables, and maintains `dist/*` manifest artifacts for UbiquityOS plugins.
 
 ## Behavior
 
 - One Deno Deploy app is managed per repository.
-- App management, env sync, deploys, revision polling, and timeline lookups use the public Deno API v2.
-- `provision` creates or updates the app, deploys the current checkout, waits for the revision, and publishes the routed revision URL to `manifest.json.homepage_url` on `dist/<branch>` inline.
-- Successful `provision` runs append a job-summary reminder that links to the Deno app settings page for GitHub linking.
-- `delete` only removes the paired `dist/*` branch. It never deletes the Deno app.
-- API-driven preview deploys currently expose routed revision URLs rather than GitHub `git-branch/*` timelines, so preview `homepage_url` values are revision-scoped.
+- `provision` creates a missing GitHub-linked Deno app, patches dashboard build/runtime config, syncs runtime and build env vars, generates `manifest.json` in GitHub Actions, and publishes it to `dist/<branch>`.
+- `publish-manifest` handles `repository_dispatch` `deno_deploy.build.routed` events and only updates `homepage_url` in the already-published `dist/<branch>/manifest.json`.
+- `delete` only removes the paired `dist/<branch>` branch. It never deletes the Deno app.
+- Successful `provision` runs append a Deno settings link to the GitHub Actions job summary by running `deno deploy switch` and reading the generated `deno.jsonc`.
 
 ## Inputs
 
-- `action`: `provision` or `delete`.
-- `token`: Deno API v2 Bearer token (`ddo_...`) used for app management and deploys.
+- `action`: `provision`, `publish-manifest`, or `delete`.
+- `token`: Deno Deploy token used for app management, env sync, timeline lookups, and `deno deploy switch`.
+- `organization`: Deno Deploy organization slug. Required for `provision`.
 - `app`: Optional Deno Deploy app slug override. Defaults to the sanitized repository name.
-- `entrypoint`: Entrypoint used for the app runtime configuration. Defaults to `src/deno.ts`.
-- `syncEnv`: Whether to sync workflow environment variables during `provision`. Defaults to `true`.
+- `entrypoint`: App runtime entrypoint. Defaults to `src/deno.ts`.
+- `syncEnv`: Whether to sync workflow runtime env vars during `provision`. Defaults to `true`.
 
 ## Outputs
 
-- `app_slug`: Resolved Deno Deploy app slug.
-- `revision_id`: Created revision id.
-- `homepage_url`: Routed URL written to `manifest.json` when the revision exposes a routed timeline.
+- `app_slug`: Resolved Deno app slug.
+- `revision_id`: Routed Deno revision id when `publish-manifest` runs.
+- `homepage_url`: Published routed URL written into `dist/*/manifest.json` when available.
 
-## Environment sync
+## Environment Sync
 
-- The repository default branch syncs variables to the `production` context.
-- All other branches sync variables to the shared `preview` context.
-- Non-default branches share one preview context, so later runs can replace preview-scoped values from earlier runs.
-- Reserved `DENO_*` names are excluded automatically before env sync.
+- Runtime env vars go to:
+  - `production` on the repository default branch
+  - `preview` on all other branches
+- Build-only env vars are always synced so Deno-owned builds can regenerate manifests:
+  - `PLUGIN_MANIFEST_REPOSITORY`
+  - `PLUGIN_MANIFEST_PRODUCTION_BRANCH=main`
+  - `PLUGIN_MANIFEST_SWITCH_TOKEN`
+- `syncEnv: false` disables workflow runtime env upload only. The internal build metadata vars above are still managed.
+- Reserved `DENO_*` names from the workflow environment are excluded automatically.
 
-## Summary Link
+## Build Config
 
-- After a successful `provision`, the action runs `deno deploy switch --app <resolved-app>` in the checked-out workspace and appends a settings URL to the GitHub Actions job summary.
-- This can create or update `deno.jsonc` in the workspace. The action does not restore that file afterward.
-- If summary generation fails, provisioning still succeeds and the reminder is skipped.
+The action treats the Deno dashboard config as the source of truth. It applies:
+
+- `install`: `deno install`
+- `build`: `deno deploy switch --token "$PLUGIN_MANIFEST_SWITCH_TOKEN" --app "$DENO_DEPLOY_APPLICATION_SLUG" && deno x -y @ubiquity-os/plugin-manifest-tool@latest`
+- `predeploy`: `deno install`
+
+Do not commit a `deploy` block in tracked `deno.json` or `deno.jsonc`. `provision` will fail fast if it finds one, because source config would override the action-managed dashboard config.
+
+## Workspace Mutation
+
+During `provision`, the action runs:
+
+- `deno install`
+- `deno x -y @ubiquity-os/plugin-manifest-tool@latest`
+- `deno deploy switch --token <token> --app <slug>`
+
+This can create or update `manifest.json`, `deno.jsonc`, `node_modules`, and related install artifacts in the checked-out workspace.
 
 ## Requirements
 
-- Run `actions/checkout` before `provision`; the action deploys git-tracked files from the current workspace.
-- Grant `contents: write` so the action can create or update `dist/*` branches.
-- Provide a Deno API v2 token scoped to the target Deno organization.
+- Run `actions/checkout@v4` before `provision`.
+- Grant `contents: write` so the action can create/update `dist/*` branches.
+- Use a GitHub-linked Deno user token if `provision` needs to create the app from GitHub source.
 
-## Example workflow
+## Example Workflow
 
 ```yaml
 name: Deno Deploy
@@ -53,6 +72,9 @@ on:
   push:
     branches-ignore:
       - dist/**
+  repository_dispatch:
+    types:
+      - deno_deploy.build.routed
   delete:
 
 jobs:
@@ -61,26 +83,37 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-
     steps:
       - uses: actions/checkout@v4
 
       - uses: ubiquity-os/deno-deploy@main
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          KERNEL_PUBLIC_KEY: ${{ secrets.KERNEL_PUBLIC_KEY }}
         with:
           action: provision
           token: ${{ secrets.DENO_2_DEPLOY_TOKEN }}
+          organization: ${{ vars.DENO_ORG_NAME }}
           app: ${{ vars.DENO_PROJECT_NAME }}
           entrypoint: src/worker.ts
+
+  publish-manifest:
+    if: github.event_name == 'repository_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: ubiquity-os/deno-deploy@main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          action: publish-manifest
+          token: ${{ secrets.DENO_2_DEPLOY_TOKEN }}
 
   delete-dist-branch:
     if: github.event_name == 'delete'
     runs-on: ubuntu-latest
     permissions:
       contents: write
-
     steps:
       - uses: ubiquity-os/deno-deploy@main
         env:
@@ -89,17 +122,19 @@ jobs:
           action: delete
 ```
 
-## Local debugging
+## Local Debugging
 
 ```bash
 deno run \
   --allow-env \
   --allow-read=.,../command-start-stop,./local.env \
-  --allow-run=git \
+  --allow-write=.,./summary.md \
+  --allow-run=git,deno \
   --allow-net=api.deno.com,api.github.com \
   ./scripts/provision.js \
   --repo-root ../command-start-stop \
   --token "$DENO_API_TOKEN" \
+  --organization ubiquity-os \
   --github-owner ubiquity-os-marketplace \
   --github-repo command-start-stop \
   --ref-name test-branch \
@@ -108,3 +143,5 @@ deno run \
   --env-file ./local.env \
   --dry-run
 ```
+
+For cross-repo local testing before publishing `@ubiquity-os/plugin-manifest-tool`, you can point `provision` at a local checkout by setting `PLUGIN_MANIFEST_TOOL_PATH=/abs/path/to/plugin-manifest-tool/bin/plugin-manifest-tool.js` and adding `node` to `--allow-run`.

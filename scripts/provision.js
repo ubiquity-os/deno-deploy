@@ -356,11 +356,15 @@ function summarizeDryRun({
   buildEnvVars,
   patchPayload,
 }) {
-  info(`Dry run for app '${appSlug}' in organization '${organization}'`);
+  info(`Dry run for app '${appSlug}'${organization ? ` in organization '${organization}'` : ""}`);
   info(`Runtime environment context: ${contextName}`);
   info(`Runtime environment variable count: ${runtimeEnvVars.length}`);
   info(`Build environment variable count: ${buildEnvVars.length}`);
-  info(`Create flow: deno deploy create --source github ... --org ${organization} --app ${appSlug}`);
+  if (organization) {
+    info(`Create flow: deno deploy create --source github ... --org ${organization} --app ${appSlug}`);
+  } else {
+    info(`Create flow: organization was not provided, so missing-app creation would fail until one is supplied.`);
+  }
   info(`Patch payload: ${JSON.stringify({
     ...patchPayload,
     env_vars: redactEnvVars(patchPayload.env_vars || []),
@@ -374,7 +378,7 @@ async function main() {
     "token",
     getStringOption(args, "token", "", "") || Deno.env.get("DENO_API_TOKEN") || Deno.env.get("DENO_DEPLOY_TOKEN") || "",
   );
-  const organization = requireString("organization", getStringOption(args, "organization", "ORGANIZATION"));
+  const organization = getStringOption(args, "organization", "ORGANIZATION");
   const githubOwner = requireString("github-owner", getStringOption(args, "github-owner", "GITHUB_OWNER"));
   const githubRepo = requireString("github-repo", getStringOption(args, "github-repo", "GITHUB_REPO"));
   const refName = requireString("ref-name", getStringOption(args, "ref-name", "REF_NAME"));
@@ -440,6 +444,11 @@ async function main() {
 
   const existingApp = await deno.getApp(appSlug);
   if (!existingApp) {
+    if (!organization) {
+      throw new Error(
+        `organization is required to create missing app '${appSlug}'. Provide the action input or ORGANIZATION env var and rerun provision.`,
+      );
+    }
     notice(`Creating GitHub-linked Deno app '${appSlug}'.`);
     await createGitHubLinkedApp({
       repoRoot,

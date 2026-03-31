@@ -9,7 +9,7 @@ inputs:
     description: "Deno Deploy token used for app management, env sync, timeline lookups, and deno deploy switch."
     required: false
   organization:
-    description: "Deno Deploy organization slug used when creating a missing GitHub-linked app."
+    description: "Optional Deno Deploy organization slug. Required only when creating a missing GitHub-linked app."
     required: false
   app:
     description: "Optional Deno Deploy app slug override. Defaults to the sanitized repository name."
@@ -177,10 +177,6 @@ runs:
           provision)
             if [ -z "$TOKEN_INPUT" ]; then
               echo "::error::The 'token' input is required for provision."
-              exit 1
-            fi
-            if [ -z "$ORGANIZATION_INPUT" ]; then
-              echo "::error::The 'organization' input is required for provision."
               exit 1
             fi
             ;;

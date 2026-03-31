@@ -9,7 +9,7 @@ inputs:
     description: "Deno Deploy token used for app management, env sync, timeline lookups, and deno deploy switch."
     required: false
   organization:
-    description: "Optional Deno Deploy organization slug. Required only when creating a missing GitHub-linked app."
+    description: "Optional Deno Deploy organization slug. When omitted, provision tries to infer it from the token using an accessible Deno app."
     required: false
   app:
     description: "Optional Deno Deploy app slug override. Defaults to the sanitized repository name."

@@ -57,6 +57,12 @@ export class DenoApiClient {
     return await response.json();
   }
 
+  listApps() {
+    return this.request("/v2/apps", {
+      expectedStatuses: [200],
+    });
+  }
+
   createApp(payload) {
     return this.request("/v2/apps", {
       method: "POST",

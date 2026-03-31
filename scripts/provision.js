@@ -314,6 +314,41 @@ async function inferDenoSettingsUrl({ repoRoot, token, appSlug }) {
   return `https://console.deno.com/${organization}/${targetApp}/settings`;
 }
 
+async function inferOrganizationFromToken({ repoRoot, token, deno }) {
+  const apps = await deno.listApps();
+  const probeApp = Array.isArray(apps)
+    ? apps.find((app) => typeof app?.slug === "string" && app.slug)
+    : null;
+
+  if (!probeApp?.slug) {
+    throw new Error(
+      "organization was not provided and could not be inferred from the token because no accessible Deno apps were found.",
+    );
+  }
+
+  await runCommand({
+    command: "deno",
+    args: ["deploy", "switch", "--app", probeApp.slug],
+    cwd: repoRoot,
+    env: {
+      DENO_DEPLOY_TOKEN: token,
+    },
+    description: `deno deploy switch for organization inference using '${probeApp.slug}'`,
+  });
+
+  const configPath = join(repoRoot, "deno.jsonc");
+  const configText = await Deno.readTextFile(configPath);
+  const config = parseJsonc(configText);
+  const organization = config?.deploy?.org;
+
+  if (typeof organization !== "string" || !organization) {
+    throw new Error(`Unable to resolve 'deploy.org' from '${configPath}' after token-based inference.`);
+  }
+
+  notice(`Inferred Deno organization '${organization}' from the token using existing app '${probeApp.slug}'.`);
+  return organization;
+}
+
 async function publishManifestArtifact({
   github,
   repoRoot,
@@ -374,7 +409,7 @@ function summarizeDryRun({
   if (organization) {
     info(`Create flow: deno deploy create --source github ... --org ${organization} --app ${appSlug}`);
   } else {
-    info(`Create flow: organization was not provided, so missing-app creation would fail until one is supplied.`);
+    info("Create flow: organization was not provided, so provision will try to infer it from the token using an accessible Deno app.");
   }
   info(`Patch payload: ${JSON.stringify({
     ...patchPayload,
@@ -454,17 +489,20 @@ async function main() {
   });
 
   const existingApp = await deno.getApp(appSlug);
+  let effectiveOrganization = organization;
   if (!existingApp) {
-    if (!organization) {
-      throw new Error(
-        `organization is required to create missing app '${appSlug}'. Provide the action input or ORGANIZATION env var and rerun provision.`,
-      );
+    if (!effectiveOrganization) {
+      effectiveOrganization = await inferOrganizationFromToken({
+        repoRoot,
+        token,
+        deno,
+      });
     }
     notice(`Creating GitHub-linked Deno app '${appSlug}'.`);
     await createGitHubLinkedApp({
       repoRoot,
       token,
-      organization,
+      organization: effectiveOrganization,
       appSlug,
       githubOwner,
       githubRepo,

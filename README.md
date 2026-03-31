@@ -14,7 +14,7 @@ Provisions GitHub-linked Deno Deploy apps, syncs Deno environment variables, and
 
 - `action`: `provision`, `publish-manifest`, or `delete`.
 - `token`: Deno Deploy token used for app management, env sync, timeline lookups, and `deno deploy switch`.
-- `organization`: Optional Deno Deploy organization slug. Required only when `provision` has to create a missing app.
+- `organization`: Optional Deno Deploy organization slug. When omitted, `provision` first tries to infer it from the token by switching to an accessible Deno app.
 - `app`: Optional Deno Deploy app slug override. Defaults to the sanitized repository name.
 - `entrypoint`: App runtime entrypoint. Defaults to `src/deno.ts`.
 - `syncEnv`: Whether to sync workflow runtime env vars during `provision`. Defaults to `true`.

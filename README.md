@@ -1,14 +1,14 @@
 # deno-deploy
 
-Provisions GitHub-linked Deno Deploy apps, syncs Deno environment variables, and maintains `dist/*` manifest artifacts for UbiquityOS plugins.
+Provisions Deno Deploy apps, syncs Deno environment variables, and maintains `dist/*` manifest artifacts for UbiquityOS plugins.
 
 ## Behavior
 
 - One Deno Deploy app is managed per repository.
-- `provision` creates a missing GitHub-linked Deno app, patches dashboard build/runtime config, syncs runtime and build env vars, generates `manifest.json` in GitHub Actions, and publishes it to `dist/<branch>`.
+- `provision` creates a missing Deno app with a one-time local-source bootstrap, patches dashboard build/runtime config, syncs runtime and build env vars, generates `manifest.json` in GitHub Actions, and publishes it to `dist/<branch>`.
 - `publish-manifest` handles `repository_dispatch` `deno_deploy.build.routed` events and only updates `homepage_url` in the already-published `dist/<branch>/manifest.json`.
 - `delete` only removes the paired `dist/<branch>` branch. It never deletes the Deno app.
-- Successful `provision` runs append a Deno settings link to the GitHub Actions job summary by running `deno deploy switch` and reading the generated `deno.jsonc`.
+- Successful `provision` runs append a Deno settings link to the GitHub Actions job summary so the app can be linked to GitHub for automated Deno builds.
 
 ## Inputs
 
@@ -50,9 +50,10 @@ Do not commit a `deploy` block in tracked `deno.json` or `deno.jsonc`. `provisio
 
 During `provision`, the action runs:
 
+- `deno deploy create --source local ...` when the app does not exist yet
 - `deno install`
 - `deno x -y @ubiquity-os/plugin-manifest-tool@latest`
-- `deno deploy switch --token <token> --app <slug>`
+- `deno deploy switch --app <slug>` with `DENO_DEPLOY_TOKEN` in the child environment
 
 This can create or update `manifest.json`, `deno.jsonc`, `node_modules`, and related install artifacts in the checked-out workspace.
 
@@ -60,7 +61,8 @@ This can create or update `manifest.json`, `deno.jsonc`, `node_modules`, and rel
 
 - Run `actions/checkout@v4` before `provision`.
 - Grant `contents: write` so the action can create/update `dist/*` branches.
-- Use a GitHub-linked Deno user token if `provision` needs to create the app from GitHub source.
+- Use a Deno Deploy token with access to the target organization.
+- Link the created app to GitHub in the Deno UI before expecting automated Deno branch builds and routed `publish-manifest` events.
 
 ## Example Workflow
 
@@ -91,7 +93,6 @@ jobs:
         with:
           action: provision
           token: ${{ secrets.DENO_2_DEPLOY_TOKEN }}
-          organization: ${{ vars.DENO_ORG_NAME }}
           app: ${{ vars.DENO_PROJECT_NAME }}
           entrypoint: src/worker.ts
 

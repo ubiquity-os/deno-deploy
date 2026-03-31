@@ -1,5 +1,5 @@
 name: "Deploy to Deno"
-description: "Provisions GitHub-linked Deno Deploy apps, syncs environment variables, and maintains dist/* manifest artifacts."
+description: "Provisions Deno Deploy apps, syncs environment variables, and maintains dist/* manifest artifacts."
 inputs:
   action:
     description: "Action to perform: 'provision', 'publish-manifest', or 'delete'."

@@ -80,9 +80,6 @@ function collectRuntimeEnvironmentVariables(contextName, environmentSource) {
     /^(DENO_|GITHUB_|RUNNER_|CI$|HOME$|PATH$|PWD$|SHELL$|SHLVL$|LANG$|LC_|TZ$|ACTIONS_|INPUT_|STATE_|JAVA_HOME$|POWERSHELL_)/;
   const excludedKeys = new Set([
     "ACTION_REF",
-    "APP_ID",
-    "APP_INSTALLATION_ID",
-    "APP_PRIVATE_KEY",
     "BUILD_ACTION_ENABLED",
     "DENO_API_TOKEN",
     "DENO_DEPLOY_TOKEN",
@@ -230,63 +227,48 @@ async function prepareWorkspaceManifest(repoRoot, manifestToolPath) {
   }
 }
 
-async function createGitHubLinkedApp({
+async function createDenoApp({
   repoRoot,
   token,
   organization,
   appSlug,
-  githubOwner,
-  githubRepo,
   entrypoint,
   repository,
 }) {
   const appConfig = buildManagedCommands(repository);
-  try {
-    await runCommand({
-      command: "deno",
-      args: [
-        "deploy",
-        "create",
-        "--source",
-        "github",
-        "--owner",
-        githubOwner,
-        "--repo",
-        githubRepo,
-        "--org",
-        organization,
-        "--app",
-        appSlug,
-        "--app-directory",
-        " ",
-        "--runtime-mode",
-        "dynamic",
-        "--entrypoint",
-        entrypoint,
-        "--region",
-        "global",
-        "--no-wait",
-        "--install-command",
-        appConfig.install,
-        "--build-command",
-        appConfig.build,
-        "--pre-deploy-command",
-        appConfig.predeploy,
-      ],
-      cwd: repoRoot,
-      env: {
-        DENO_DEPLOY_TOKEN: token,
-      },
-      description: `create Deno app '${appSlug}'`,
-    });
-  } catch (caughtError) {
-    if (caughtError.message.includes("No GitHub identity was found for the authenticated user")) {
-      throw new Error(
-        `${caughtError.message}\nUse a GitHub-linked Deno user token for app creation, then rerun provision.`,
-      );
-    }
-    throw caughtError;
-  }
+  await runCommand({
+    command: "deno",
+    args: [
+      "deploy",
+      "create",
+      "--source",
+      "local",
+      "--org",
+      organization,
+      "--app",
+      appSlug,
+      "--app-directory",
+      ".",
+      "--runtime-mode",
+      "dynamic",
+      "--entrypoint",
+      entrypoint,
+      "--region",
+      "global",
+      "--no-wait",
+      "--install-command",
+      appConfig.install,
+      "--build-command",
+      appConfig.build,
+      "--pre-deploy-command",
+      appConfig.predeploy,
+    ],
+    cwd: repoRoot,
+    env: {
+      DENO_DEPLOY_TOKEN: token,
+    },
+    description: `create Deno app '${appSlug}'`,
+  });
 }
 
 async function inferDenoSettingsUrl({ repoRoot, token, appSlug }) {
@@ -407,7 +389,7 @@ function summarizeDryRun({
   info(`Runtime environment variable count: ${runtimeEnvVars.length}`);
   info(`Build environment variable count: ${buildEnvVars.length}`);
   if (organization) {
-    info(`Create flow: deno deploy create --source github ... --org ${organization} --app ${appSlug}`);
+    info(`Create flow: deno deploy create --source local ... --org ${organization} --app ${appSlug}`);
   } else {
     info("Create flow: organization was not provided, so provision will try to infer it from the token using an accessible Deno app.");
   }
@@ -498,14 +480,12 @@ async function main() {
         deno,
       });
     }
-    notice(`Creating GitHub-linked Deno app '${appSlug}'.`);
-    await createGitHubLinkedApp({
+    notice(`Creating Deno app '${appSlug}' with local source bootstrap.`);
+    await createDenoApp({
       repoRoot,
       token,
       organization: effectiveOrganization,
       appSlug,
-      githubOwner,
-      githubRepo,
       entrypoint,
       repository,
     });
@@ -530,7 +510,7 @@ async function main() {
       token,
       appSlug,
     });
-    await appendSummary(`Link the project to GitHub if not done already: ${settingsUrl}`);
+    await appendSummary(`Link this Deno app to GitHub to enable automated builds: ${settingsUrl}`);
   } catch (summaryError) {
     warning(`Unable to append the Deno settings summary link: ${summaryError.message}`);
   }

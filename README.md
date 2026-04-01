@@ -41,9 +41,11 @@ Provisions Deno Deploy apps, syncs Deno environment variables, and maintains `di
 
 The action treats the Deno dashboard config as the source of truth. It applies:
 
-- `install`: repo-specific `deno eval ...` command that resolves the checked-out branch from local refs first, falls back to GitHub's `branches-where-head` API for the current commit, then runs `deno install` with `PLUGIN_MANIFEST_REPOSITORY`, `PLUGIN_MANIFEST_PRODUCTION_BRANCH=main`, and `PLUGIN_MANIFEST_REF_NAME` injected into the child environment.
-- `build`: repo-specific `deno eval ...` command that uses the same branch resolution flow and then runs `deno x -y @ubiquity-os/plugin-manifest-tool@1.3.0 --repository <owner>/<repo> --production-branch main [--ref-name <branch>]`, while still injecting the same manifest env for compatibility.
+- `install`: `deno install`
+- `build`: `deno x -y @ubiquity-os/plugin-manifest-tool@latest --repository <owner>/<repo> --production-branch main`
 - `predeploy`: `deno install`
+
+Repository identity for Deno-owned builds comes from the persisted Build-context variable `PLUGIN_MANIFEST_REPOSITORY`. Branch-specific live manifest behavior comes from Deno runtime handling in `plugin-sdk`, not from build-time git discovery.
 
 Do not commit a `deploy` block in tracked `deno.json` or `deno.jsonc`. `provision` will fail fast if it finds one, because source config would override the action-managed dashboard config.
 

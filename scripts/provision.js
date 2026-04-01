@@ -5,18 +5,12 @@ import { getBooleanOption, getStringOption, parseArgs, requireString, slugify } 
 import { DenoApiClient } from "./lib/deno_api.js";
 import { ensureArtifactBranch, GitHubApiClient } from "./lib/github_api.js";
 
-const MANIFEST_REF_SETUP_TEMPLATE =
-  "const root = Deno.cwd(); const decoder = new TextDecoder(); const lf = String.fromCharCode(10); const cr = String.fromCharCode(13); const tab = String.fromCharCode(9); const remotePrefix = 'origin/'; const branchPrefix = 'refs/heads/'; const repository = __REPOSITORY__; const toText = (output) => decoder.decode(output).replaceAll(cr, '').trim(); const gitOutput = async (args) => await new Deno.Command('git', { args: ['-C', root, ...args], stdout: 'piped', stderr: 'null' }).output(); const normalizeRef = (value) => { const trimmed = String(value || '').trim(); if (!trimmed || trimmed === 'HEAD') return ''; return trimmed.startsWith(remotePrefix) ? trimmed.slice(remotePrefix.length) : trimmed; }; const pickBranch = (values) => values.map(normalizeRef).find((value) => value && !value.startsWith('dist/')) || values.map(normalizeRef).find(Boolean) || ''; let ref = normalizeRef(Deno.env.get('PLUGIN_MANIFEST_REF_NAME')); const head = toText((await gitOutput(['rev-parse', 'HEAD'])).stdout); if (!ref) { ref = normalizeRef(toText((await gitOutput(['branch', '--show-current'])).stdout).split(lf)[0] || ''); } if (!ref) { const candidates = toText((await gitOutput(['for-each-ref', '--format=%(refname:short)', '--points-at', 'HEAD', 'refs/heads', 'refs/remotes/origin'])).stdout).split(lf).filter(Boolean); ref = pickBranch(candidates); } if (!ref && head && repository) { try { const response = await fetch('https://api.github.com/repos/' + repository + '/commits/' + head + '/branches-where-head', { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'ubiquity-os-deno-deploy' } }); if (response.ok) { const branches = await response.json(); ref = pickBranch(branches.map((branch) => branch?.name || '')); } } catch {} } if (!ref && head) { const remoteProcess = await gitOutput(['ls-remote', '--heads', 'origin']); if (remoteProcess.success) { const lines = toText(remoteProcess.stdout).split(lf).filter(Boolean); const match = lines.find((line) => line.startsWith(head + tab)); if (match) { const resolved = match.split(tab)[1] || ''; ref = normalizeRef(resolved.startsWith(branchPrefix) ? resolved.slice(branchPrefix.length) : resolved); } } } const manifestEnv = { PLUGIN_MANIFEST_PRODUCTION_BRANCH: 'main' }; if (repository) manifestEnv.PLUGIN_MANIFEST_REPOSITORY = repository; if (ref) manifestEnv.PLUGIN_MANIFEST_REF_NAME = ref; if (ref) console.log('Resolved manifest ref: ' + ref); else if (head) console.log('Unable to resolve manifest ref for HEAD: ' + head);";
-const PLUGIN_MANIFEST_TOOL_SPEC = "@ubiquity-os/plugin-manifest-tool@1.3.0";
+const PLUGIN_MANIFEST_TOOL_SPEC = "@ubiquity-os/plugin-manifest-tool@latest";
 
 function buildManagedCommands(repository) {
-  const repositoryLiteral = JSON.stringify(repository).replaceAll('"', '\\"');
-  const manifestRefSetup = MANIFEST_REF_SETUP_TEMPLATE.replace("__REPOSITORY__", repositoryLiteral);
   return {
-    install:
-      `deno eval "${manifestRefSetup} const installProcess = new Deno.Command('deno', { args: ['install'], env: manifestEnv, stdout: 'inherit', stderr: 'inherit' }); const result = await installProcess.output(); Deno.exit(result.code);"`,
-    build:
-      `deno eval "${manifestRefSetup} const manifestArgs = ['x', '-y', '${PLUGIN_MANIFEST_TOOL_SPEC}', '--repository', repository, '--production-branch', 'main']; if (ref) manifestArgs.push('--ref-name', ref); const manifestProcess = new Deno.Command('deno', { args: manifestArgs, env: manifestEnv, stdout: 'inherit', stderr: 'inherit' }); const result = await manifestProcess.output(); Deno.exit(result.code);"`,
+    install: "deno install",
+    build: `deno x -y ${PLUGIN_MANIFEST_TOOL_SPEC} --repository ${repository} --production-branch main`,
     predeploy: "deno install",
   };
 }
@@ -106,7 +100,7 @@ function collectRuntimeEnvironmentVariables(contextName, environmentSource) {
   }));
 }
 
-function collectBuildEnvironmentVariables({ repository, token }) {
+function collectBuildEnvironmentVariables({ repository }) {
   const envVars = [
     {
       key: "PLUGIN_MANIFEST_PRODUCTION_BRANCH",
@@ -121,8 +115,6 @@ function collectBuildEnvironmentVariables({ repository, token }) {
       contexts: ["build"],
     },
   ];
-
-  void token;
   return envVars;
 }
 
@@ -545,7 +537,6 @@ async function main() {
   const runtimeEnvVars = syncEnv ? collectRuntimeEnvironmentVariables(contextName, environmentSource) : [];
   const buildEnvVars = collectBuildEnvironmentVariables({
     repository,
-    token,
   });
   const patchPayload = {
     config: buildConfig(entrypoint, repository),

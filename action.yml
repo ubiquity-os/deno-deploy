@@ -1,42 +1,37 @@
 name: "Deploy to Deno"
-description:
-  "Checks out the repository and publishes or deletes the project on Deno Deploy.
-  If generateEnv is true, they will get published with the deployment environment as well."
+description: "Provisions Deno Deploy apps, syncs environment variables, and maintains dist/* manifest artifacts."
 inputs:
   action:
-    description: "Action to perform: 'deploy' or 'delete' the project."
+    description: "Action to perform: 'provision', 'publish-manifest', or 'delete'."
     required: true
-    default: "deploy"
+    default: "provision"
   token:
-    description: "Deno token for publishing."
-    required: true
+    description: "Deno Deploy token used for app management, env sync, timeline lookups, and deno deploy switch."
+    required: false
   organization:
-    description: The organization to target when deploying the project. If omitted, will default to the user account.
+    description: "Optional Deno Deploy organization slug. When omitted, provision tries to infer it from the token using an accessible Deno app."
     required: false
-  production:
-    description: "Deploy to production (uses --prod flag)"
+  app:
+    description: "Optional Deno Deploy app slug override. Defaults to the sanitized repository name."
     required: false
-    default: "true"
   entrypoint:
-    description: "The entrypoint to the script that will be deployed."
+    description: "Entrypoint used for the app runtime configuration."
     required: false
     default: "src/deno.ts"
-  generateEnv:
-    description: "Generates the .env file based on the current environment if true."
+  syncEnv:
+    description: "Whether to sync workflow runtime environment variables during provisioning."
     required: false
     default: "true"
-  project_name:
-    description: "Overrides the auto-generated Deno Deploy project name."
-    required: false
-  sourceRef:
-    description: "Source branch ref used for deterministic project naming and artifact branch mapping."
-    required: false
-    default: "${{ github.event_name == 'delete' && github.event.ref || github.event.workflow_run.head_branch || github.ref_name }}"
-  artifactPrefix:
-    description: "Prefix used for paired artifact branches."
-    required: false
-    default: "dist/"
-outputs: {}
+outputs:
+  app_slug:
+    description: "Resolved Deno Deploy app slug."
+    value: ${{ steps.provision.outputs.app_slug || steps.publish_manifest.outputs.app_slug }}
+  revision_id:
+    description: "Routed Deno Deploy revision id when publish-manifest runs."
+    value: ${{ steps.publish_manifest.outputs.revision_id }}
+  homepage_url:
+    description: "Published homepage_url written to dist/* manifest.json when available."
+    value: ${{ steps.publish_manifest.outputs.homepage_url }}
 runs:
   using: "composite"
   steps:
@@ -45,385 +40,227 @@ runs:
       with:
         deno-version: v2.x
 
-    - name: Install CLI
-      shell: bash
-      run: deno install -gArf jsr:@deno/deployctl
-
-    - name: Resolve source and artifact refs
-      id: resolve_refs
+    - name: Resolve action context
+      id: resolve
       shell: bash
       env:
-        SOURCE_REF_INPUT: ${{ inputs.sourceRef }}
-        ARTIFACT_PREFIX_INPUT: ${{ inputs.artifactPrefix }}
-        EVENT_REF_TYPE: ${{ github.event.ref_type || '' }}
+        ACTION_INPUT: ${{ inputs.action }}
+        APP_INPUT: ${{ inputs.app }}
+        DEFAULT_BRANCH_INPUT: ${{ github.event.repository.default_branch }}
+        DELETE_REF_INPUT: ${{ github.event.ref || '' }}
+        DISPATCH_REVISION_ID_INPUT: ${{ github.event.client_payload.revision.id || '' }}
+        EVENT_NAME_INPUT: ${{ github.event_name }}
+        EVENT_REF_TYPE_INPUT: ${{ github.event.ref_type || '' }}
+        REPO_NAME_INPUT: ${{ github.event.repository.name }}
+        REF_NAME_INPUT: ${{ github.ref_name }}
       run: |
-        source_ref="$SOURCE_REF_INPUT"
-        source_ref="${source_ref#refs/heads/}"
-        source_ref="${source_ref#refs/tags/}"
-        if [ -z "$source_ref" ]; then
-          source_ref="${GITHUB_REF_NAME}"
+        set -euo pipefail
+
+        action="$ACTION_INPUT"
+        case "$action" in
+          provision|publish-manifest|delete) ;;
+          *)
+            echo "::error::Unsupported action '$action'. Expected 'provision', 'publish-manifest', or 'delete'."
+            exit 1
+            ;;
+        esac
+
+        raw_app="$APP_INPUT"
+        if [ -z "$raw_app" ]; then
+          raw_app="$REPO_NAME_INPUT"
         fi
 
-        artifact_prefix="$ARTIFACT_PREFIX_INPUT"
-        if [ -z "$artifact_prefix" ]; then
-          artifact_prefix="dist/"
+        app_slug="$(printf '%s' "$raw_app" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//; s/-{2,}/-/g')"
+        if [ -z "$app_slug" ]; then
+          app_slug="app"
         fi
-        artifact_prefix="${artifact_prefix#refs/heads/}"
-        if [[ "$artifact_prefix" != */ ]]; then
-          artifact_prefix="${artifact_prefix}/"
-        fi
+        while [ "${#app_slug}" -lt 3 ]; do
+          app_slug="${app_slug}app"
+        done
 
-        if [[ "$source_ref" == "$artifact_prefix"* ]]; then
-          artifact_ref="$source_ref"
-        else
-          artifact_ref="${artifact_prefix}${source_ref}"
+        ref_name="$REF_NAME_INPUT"
+        if [ "$EVENT_NAME_INPUT" = "delete" ] && [ -n "$DELETE_REF_INPUT" ]; then
+          ref_name="$DELETE_REF_INPUT"
         fi
+        ref_name="${ref_name#refs/heads/}"
+        ref_name="${ref_name#refs/tags/}"
 
         is_tag_ref="false"
-        if [[ "$EVENT_REF_TYPE" == "tag" ]] || [[ "${GITHUB_REF:-}" == refs/tags/* ]]; then
+        if [ "$EVENT_REF_TYPE_INPUT" = "tag" ] || [[ "${GITHUB_REF:-}" == refs/tags/* ]]; then
           is_tag_ref="true"
+        fi
+
+        is_dist_ref="false"
+        if [[ "$ref_name" == dist/* ]]; then
+          is_dist_ref="true"
+        fi
+
+        env_context="preview"
+        if [ -n "$DEFAULT_BRANCH_INPUT" ] && [ "$ref_name" = "$DEFAULT_BRANCH_INPUT" ]; then
+          env_context="production"
         fi
 
         should_skip="false"
         skip_reason=""
-        if [[ "$is_tag_ref" == "true" ]]; then
-          should_skip="true"
-          skip_reason="tag refs are not supported"
-        elif [[ "$source_ref" == "$artifact_prefix"* ]]; then
-          should_skip="true"
-          skip_reason="artifact refs are ignored"
+
+        case "$action" in
+          provision)
+            if [ "$is_tag_ref" = "true" ]; then
+              should_skip="true"
+              skip_reason="tag refs are not supported"
+            elif [ "$is_dist_ref" = "true" ]; then
+              should_skip="true"
+              skip_reason="dist branches are ignored"
+            fi
+            ;;
+          publish-manifest)
+            if [ "$EVENT_NAME_INPUT" != "repository_dispatch" ]; then
+              should_skip="true"
+              skip_reason="publish-manifest only handles repository_dispatch events"
+            elif [ -z "$DISPATCH_REVISION_ID_INPUT" ]; then
+              should_skip="true"
+              skip_reason="revision id was not present in github.event.client_payload"
+            fi
+            ;;
+          delete)
+            if [ "$EVENT_NAME_INPUT" != "delete" ]; then
+              should_skip="true"
+              skip_reason="delete only handles GitHub delete events"
+            elif [ "$EVENT_REF_TYPE_INPUT" != "branch" ] && [ -n "$EVENT_REF_TYPE_INPUT" ]; then
+              should_skip="true"
+              skip_reason="delete only handles branch deletions"
+            elif [ "$is_tag_ref" = "true" ]; then
+              should_skip="true"
+              skip_reason="tag deletions are ignored"
+            elif [ "$is_dist_ref" = "true" ]; then
+              should_skip="true"
+              skip_reason="dist branches are ignored"
+            fi
+            ;;
+        esac
+
+        artifact_ref=""
+        if [ -n "$ref_name" ]; then
+          artifact_ref="dist/$ref_name"
         fi
 
-        echo "source_ref=$source_ref" >> "$GITHUB_OUTPUT"
+        echo "action_mode=$action" >> "$GITHUB_OUTPUT"
+        echo "app_slug=$app_slug" >> "$GITHUB_OUTPUT"
+        echo "ref_name=$ref_name" >> "$GITHUB_OUTPUT"
         echo "artifact_ref=$artifact_ref" >> "$GITHUB_OUTPUT"
-        echo "is_tag_ref=$is_tag_ref" >> "$GITHUB_OUTPUT"
+        echo "default_branch=$DEFAULT_BRANCH_INPUT" >> "$GITHUB_OUTPUT"
+        echo "environment_context=$env_context" >> "$GITHUB_OUTPUT"
+        echo "dispatch_revision_id=$DISPATCH_REVISION_ID_INPUT" >> "$GITHUB_OUTPUT"
         echo "should_skip=$should_skip" >> "$GITHUB_OUTPUT"
         echo "skip_reason=$skip_reason" >> "$GITHUB_OUTPUT"
-        echo "SOURCE_REF=$source_ref" >> "$GITHUB_ENV"
-        echo "ARTIFACT_REF=$artifact_ref" >> "$GITHUB_ENV"
 
-    - name: Skip unsupported refs
-      if: ${{ steps.resolve_refs.outputs.should_skip == 'true' }}
+    - name: Skip unsupported invocation
+      if: ${{ steps.resolve.outputs.should_skip == 'true' }}
       shell: bash
       env:
-        SOURCE_REF: ${{ steps.resolve_refs.outputs.source_ref }}
-        SKIP_REASON: ${{ steps.resolve_refs.outputs.skip_reason }}
+        ACTION_MODE: ${{ steps.resolve.outputs.action_mode }}
+        SKIP_REASON: ${{ steps.resolve.outputs.skip_reason }}
       run: |
-        echo "::notice::Skipping action for '${SOURCE_REF}' (${SKIP_REASON})."
+        echo "::notice::Skipping '$ACTION_MODE' (${SKIP_REASON})."
 
-    - name: Prepare Environment Variables
-      if: ${{ steps.resolve_refs.outputs.should_skip != 'true' }}
+    - name: Validate required inputs
+      if: ${{ steps.resolve.outputs.should_skip != 'true' }}
       shell: bash
       env:
-        SOURCE_REF: ${{ steps.resolve_refs.outputs.source_ref }}
+        ACTION_MODE: ${{ steps.resolve.outputs.action_mode }}
+        ORGANIZATION_INPUT: ${{ inputs.organization }}
+        TOKEN_INPUT: ${{ inputs.token }}
       run: |
-        if [ -n "${{ inputs.project_name }}" ]; then
-          new_name="${{ inputs.project_name }}"
-        else
-          # Sanitize both project name and branch name to meet Deno Deploy requirements
-          project_name=$(echo "${{ github.event.repository.name }}" | sed 's#[^a-zA-Z0-9]#-#g')
-          branch_name=$(echo "$SOURCE_REF" | sed 's#[^a-zA-Z0-9]#-#g')
-          new_name="${project_name}-${branch_name}"
-        fi
+        set -euo pipefail
 
-        # Clean up the name to meet Deno Deploy requirements:
-        # - Only a-z, 0-9, and - allowed
-        # - Must not start or end with hyphen
-        # - Cannot exceed 26 characters
-        new_name=$(echo "$new_name" | sed 's#[^a-zA-Z0-9-]#-#g' | sed 's#^-*##' | sed 's#-*$##' | cut -c 1-26)
-
-        # Ensure we don't end with a hyphen after truncation
-        new_name=$(echo "$new_name" | sed 's#-*$##')
-
-        # Ensure minimum length of 3 characters
-        if [ ${#new_name} -lt 3 ]; then
-          new_name="${new_name}app"
-        fi
-
-        echo "DENO_PROJECT_NAME=$new_name" >> $GITHUB_ENV
-        DENO_DEPLOYMENT_ID=${{ github.sha }}
-        echo "DENO_DEPLOYMENT_ID=$DENO_DEPLOYMENT_ID" >> $GITHUB_ENV
-
-    # === DEPLOY STEPS ===
-    - name: Generate .env File
-      if: inputs.action == 'deploy' && inputs.generateEnv == 'true' && steps.resolve_refs.outputs.should_skip != 'true'
-      shell: bash
-      run: |
-        cat > generate-env.ts <<'EOF'
-        const envVars = Deno.env.toObject();
-        const filtered = Object.entries(envVars)
-          .filter(([k, v]) => !/^(GITHUB_|RUNNER_|CI|HOME|PATH|PWD|SHELL|LANG|LC_|TZ|ACTIONS_)/.test(k))
-          .filter(([k, v]) => v !== undefined && v !== null && v.trim() !== "")
-          .reduce((acc, [k,v]) => ({...acc, [k]:v}), {});
-        await Deno.writeTextFile(".env",
-          Object.entries(filtered)
-            .map(([k,v]) => `${k}="${v.replace(/"/g, '\\"')}"`)
-            .join("\n")
-        );
-        EOF
-        deno run --allow-env --allow-write=.env generate-env.ts
-        rm generate-env.ts
-
-    - name: Manage Deno Deploy Project (Deploy)
-      if: inputs.action == 'deploy' && steps.resolve_refs.outputs.should_skip != 'true'
-      shell: bash
-      id: deno_project
-      env:
-        DENO_DEPLOY_TOKEN: ${{ inputs.token }}
-      run: |
-        deployctl projects create \
-          --token=$DENO_DEPLOY_TOKEN \
-          --project=$DENO_PROJECT_NAME \
-          --force \
-          --color=never \
-          ${{ inputs.organization && format('--org={0}', inputs.organization) || '' }} || true
-
-        # Construct the deployment URL directly (Deno Deploy URLs follow predictable pattern)
-        PROJECT_URL="https://${DENO_PROJECT_NAME}.deno.dev"
-
-        echo "PROJECT_URL=$PROJECT_URL" >> $GITHUB_ENV
-        echo "deployment_url=$PROJECT_URL" >> $GITHUB_OUTPUT
-
-    - name: Update manifest.json with deployment URL
-      if: inputs.action == 'deploy' && steps.resolve_refs.outputs.should_skip != 'true'
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const fs = require('fs');
-          const path = require('path');
-
-          const manifestPath = path.resolve("${{ github.workspace }}", './manifest.json');
-
-          if (!fs.existsSync(manifestPath)) {
-            console.log('manifest.json not found. Skipping update.');
-            return;
-          }
-
-          const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-
-          manifest["homepage_url"] = "${{ steps.deno_project.outputs.deployment_url }}";
-
-          const updatedManifest = JSON.stringify(manifest, null, 2);
-          fs.writeFileSync(manifestPath, updatedManifest);
-          console.log('Updated manifest:', updatedManifest);
-
-    - name: Deploy to Deno
-      if: inputs.action == 'deploy' && steps.resolve_refs.outputs.should_skip != 'true'
-      shell: bash
-      env:
-        DENO_DEPLOY_TOKEN: ${{ inputs.token }}
-      run: |
-        deployctl deploy \
-          --token=$DENO_DEPLOY_TOKEN \
-          --project=$DENO_PROJECT_NAME \
-          --entrypoint=${{ inputs.entrypoint }} \
-          ${{ inputs.generateEnv == 'true' && '--env-file=.env' || '' }} \
-          ${{ inputs.production == 'true' && '--prod' || '' }}
+        case "$ACTION_MODE" in
+          provision)
+            if [ -z "$TOKEN_INPUT" ]; then
+              echo "::error::The 'token' input is required for provision."
+              exit 1
+            fi
+            ;;
+          publish-manifest)
+            if [ -z "$TOKEN_INPUT" ]; then
+              echo "::error::The 'token' input is required for publish-manifest."
+              exit 1
+            fi
+            ;;
+        esac
 
     - name: Get GitHub App token
-      if: env.APP_ID != '' && env.APP_PRIVATE_KEY != '' && steps.resolve_refs.outputs.should_skip != 'true'
+      if: ${{ steps.resolve.outputs.should_skip != 'true' && env.APP_ID != '' && env.APP_PRIVATE_KEY != '' }}
       uses: actions/create-github-app-token@v1
       id: app-token
       with:
         app-id: ${{ env.APP_ID }}
         private-key: ${{ env.APP_PRIVATE_KEY }}
 
-    - name: Check if manifest.json exists
-      id: check_manifest
-      if: inputs.action == 'deploy' && steps.resolve_refs.outputs.should_skip != 'true'
-      shell: bash
-      run: |
-        if [ -f manifest.json ]; then
-          echo "exists=true" >> $GITHUB_OUTPUT
-        else
-          echo "exists=false" >> $GITHUB_OUTPUT
-        fi
-
-    - name: Format manifest using Prettier
-      shell: bash
-      if: inputs.action == 'deploy' && steps.check_manifest.outputs.exists == 'true' && steps.resolve_refs.outputs.should_skip != 'true'
-      continue-on-error: true
-      run: |
-        npx prettier --write manifest.json
-
-    - name: Publish manifest.json to artifact branch
-      if: inputs.action == 'deploy' && steps.check_manifest.outputs.exists == 'true' && steps.resolve_refs.outputs.should_skip != 'true'
-      uses: actions/github-script@v7
-      with:
-        github-token: ${{ steps.app-token.outputs.token || env.GITHUB_TOKEN || github.token }}
-        script: |
-          const fs = require("fs");
-          const path = require("path");
-
-          const manifestPath = path.resolve(process.env.GITHUB_WORKSPACE, "manifest.json");
-          const manifestContent = fs.readFileSync(manifestPath, "utf8");
-          const sourceRef = process.env.SOURCE_REF;
-          const artifactRef = process.env.ARTIFACT_REF;
-          const artifactBranchRef = `heads/${artifactRef}`;
-          const { owner, repo } = context.repo;
-
-          async function resolveBaseSha() {
-            try {
-              const { data } = await github.rest.git.getRef({
-                owner,
-                repo,
-                ref: `heads/${sourceRef}`,
-              });
-              return data.object.sha;
-            } catch (error) {
-              if (error.status !== 404) {
-                throw error;
-              }
-              const { data: repository } = await github.rest.repos.get({ owner, repo });
-              const { data: defaultRef } = await github.rest.git.getRef({
-                owner,
-                repo,
-                ref: `heads/${repository.default_branch}`,
-              });
-              core.warning(
-                `Source ref '${sourceRef}' not found, using '${repository.default_branch}' as artifact base.`
-              );
-              return defaultRef.object.sha;
-            }
-          }
-
-          async function ensureArtifactBranch() {
-            try {
-              await github.rest.git.getRef({ owner, repo, ref: artifactBranchRef });
-            } catch (error) {
-              if (error.status !== 404) {
-                throw error;
-              }
-              const baseSha = await resolveBaseSha();
-              try {
-                await github.rest.git.createRef({
-                  owner,
-                  repo,
-                  ref: `refs/${artifactBranchRef}`,
-                  sha: baseSha,
-                });
-                core.notice(`Created artifact branch '${artifactRef}'.`);
-              } catch (createError) {
-                if (createError.status === 422) {
-                  core.info(`Artifact branch '${artifactRef}' was created concurrently.`);
-                  return;
-                }
-                throw createError;
-              }
-            }
-          }
-
-          async function getManifestState() {
-            try {
-              const { data } = await github.rest.repos.getContent({
-                owner,
-                repo,
-                path: "manifest.json",
-                ref: artifactRef,
-              });
-              if (Array.isArray(data)) {
-                return { sha: undefined, content: null };
-              }
-              const decoded = Buffer.from(data.content, data.encoding || "base64").toString("utf8");
-              return { sha: data.sha, content: decoded };
-            } catch (error) {
-              if (error.status === 404) {
-                return { sha: undefined, content: null };
-              }
-              throw error;
-            }
-          }
-
-          await ensureArtifactBranch();
-          const existingManifest = await getManifestState();
-          if (existingManifest.content === manifestContent) {
-            core.info(`manifest.json is unchanged on '${artifactRef}', skipping commit.`);
-            return;
-          }
-
-          await github.rest.repos.createOrUpdateFileContents({
-            owner,
-            repo,
-            path: "manifest.json",
-            message: "chore: [skip ci] update manifest.json url",
-            content: Buffer.from(manifestContent, "utf8").toString("base64"),
-            branch: artifactRef,
-            ...(existingManifest.sha ? { sha: existingManifest.sha } : {}),
-          });
-
-          core.notice(`Updated manifest.json on '${artifactRef}'.`);
-      env:
-        SOURCE_REF: ${{ steps.resolve_refs.outputs.source_ref }}
-        ARTIFACT_REF: ${{ steps.resolve_refs.outputs.artifact_ref }}
-
-    - name: Write Deployment URL to Summary
-      if: inputs.action == 'deploy' && steps.resolve_refs.outputs.should_skip != 'true'
+    - name: Provision Deno app
+      if: ${{ steps.resolve.outputs.action_mode == 'provision' && steps.resolve.outputs.should_skip != 'true' }}
+      id: provision
       shell: bash
       env:
-        ARTIFACT_REF: ${{ steps.resolve_refs.outputs.artifact_ref }}
+        ACTION_PATH: ${{ github.action_path }}
+        DEFAULT_BRANCH: ${{ steps.resolve.outputs.default_branch }}
+        DENO_API_TOKEN: ${{ inputs.token }}
+        DENO_APP_SLUG: ${{ steps.resolve.outputs.app_slug }}
+        ENTRYPOINT: ${{ inputs.entrypoint }}
+        GITHUB_OWNER: ${{ github.repository_owner }}
+        GITHUB_REPO: ${{ github.event.repository.name }}
+        GITHUB_TOKEN: ${{ steps.app-token.outputs.token || env.GITHUB_TOKEN || github.token }}
+        ORGANIZATION: ${{ inputs.organization }}
+        REF_NAME: ${{ steps.resolve.outputs.ref_name }}
+        REPO_ROOT: ${{ github.workspace }}
+        SYNC_ENV: ${{ inputs.syncEnv }}
       run: |
-        echo "### Deployment URL" >> $GITHUB_STEP_SUMMARY
-        echo "${{ steps.deno_project.outputs.deployment_url }}" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "Artifact branch: \`${ARTIFACT_REF}\`" >> $GITHUB_STEP_SUMMARY
+        set -euo pipefail
 
-    # === DELETE STEP ===
-    - name: Delete Deno Deploy Project
-      if: inputs.action == 'delete' && steps.resolve_refs.outputs.should_skip != 'true'
+        deno run \
+          --allow-env \
+          --allow-read="$ACTION_PATH,$GITHUB_WORKSPACE" \
+          --allow-write="$GITHUB_WORKSPACE,$GITHUB_OUTPUT${GITHUB_STEP_SUMMARY:+,$GITHUB_STEP_SUMMARY}" \
+          --allow-run=git,deno \
+          --allow-net=api.deno.com,api.github.com \
+          "$ACTION_PATH/scripts/provision.js"
+
+    - name: Publish manifest homepage
+      if: ${{ steps.resolve.outputs.action_mode == 'publish-manifest' && steps.resolve.outputs.should_skip != 'true' }}
+      id: publish_manifest
       shell: bash
       env:
-        DENO_DEPLOY_TOKEN: ${{ inputs.token }}
+        ACTION_PATH: ${{ github.action_path }}
+        APP_SLUG: ${{ github.event.client_payload.app.slug || steps.resolve.outputs.app_slug }}
+        DENO_API_TOKEN: ${{ inputs.token }}
+        GITHUB_OWNER: ${{ github.repository_owner }}
+        GITHUB_REPO: ${{ github.event.repository.name }}
+        GITHUB_TOKEN: ${{ steps.app-token.outputs.token || env.GITHUB_TOKEN || github.token }}
+        PRODUCTION_BRANCH: main
+        REVISION_ID: ${{ steps.resolve.outputs.dispatch_revision_id }}
       run: |
-        deployctl projects delete \
-          --token=$DENO_DEPLOY_TOKEN \
-          --project=$DENO_PROJECT_NAME \
-          --force \
-          --color=never || true
+        set -euo pipefail
 
-    - name: Delete paired artifact branch
-      if: inputs.action == 'delete' && steps.resolve_refs.outputs.should_skip != 'true'
-      uses: actions/github-script@v7
-      with:
-        github-token: ${{ steps.app-token.outputs.token || env.GITHUB_TOKEN || github.token }}
-        script: |
-          const { owner, repo } = context.repo;
-          const artifactRef = process.env.ARTIFACT_REF;
+        deno run \
+          --allow-env \
+          --allow-read="$ACTION_PATH" \
+          --allow-write="$GITHUB_OUTPUT" \
+          --allow-net=api.deno.com,api.github.com \
+          "$ACTION_PATH/scripts/publish_manifest.js"
 
-          function isBranchNotFoundError(error) {
-            if (!error || typeof error !== "object") {
-              return false;
-            }
-
-            if (error.status === 404) {
-              return true;
-            }
-
-            if (error.status !== 422) {
-              return false;
-            }
-
-            const message = error?.response?.data?.message || error?.message || "";
-            return /reference .*does not exist/i.test(message);
-          }
-
-          try {
-            await github.rest.git.deleteRef({ owner, repo, ref: `heads/${artifactRef}` });
-            core.notice(`Deleted artifact branch '${artifactRef}'.`);
-          } catch (error) {
-            if (isBranchNotFoundError(error)) {
-              core.warning(`Branch '${artifactRef}' could not be deleted because it was not found.`);
-              return;
-            }
-            throw error;
-          }
-      env:
-        ARTIFACT_REF: ${{ steps.resolve_refs.outputs.artifact_ref }}
-
-    - name: Write Deletion to Summary
-      if: inputs.action == 'delete' && steps.resolve_refs.outputs.should_skip != 'true'
+    - name: Delete paired dist branch
+      if: ${{ steps.resolve.outputs.action_mode == 'delete' && steps.resolve.outputs.should_skip != 'true' }}
       shell: bash
       env:
-        ARTIFACT_REF: ${{ steps.resolve_refs.outputs.artifact_ref }}
+        ACTION_PATH: ${{ github.action_path }}
+        ARTIFACT_REF: ${{ steps.resolve.outputs.artifact_ref }}
+        GITHUB_OWNER: ${{ github.repository_owner }}
+        GITHUB_REPO: ${{ github.event.repository.name }}
+        GITHUB_TOKEN: ${{ steps.app-token.outputs.token || env.GITHUB_TOKEN || github.token }}
       run: |
-        echo "### Deletion Summary" >> $GITHUB_STEP_SUMMARY
-        echo "Deployment \`${DENO_PROJECT_NAME}\` and artifact branch \`${ARTIFACT_REF}\` were deleted or already absent." >> $GITHUB_STEP_SUMMARY
+        set -euo pipefail
+
+        deno run \
+          --allow-env \
+          --allow-read="$ACTION_PATH" \
+          --allow-net=api.github.com \
+          "$ACTION_PATH/scripts/delete_dist_branch.js"

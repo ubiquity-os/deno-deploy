@@ -231,9 +231,15 @@ runs:
 
         # Use the new deno deploy CLI (built into Deno 2)
         # Deploy directly from local directory with production flag
+        ORG_ARG=""
+        if [ -n "${{ inputs.organization }}" ]; then
+          ORG_ARG="--org ${{ inputs.organization }}"
+        fi
+
         deno deploy \
-          --org ${ORG_FLAG:---org ""} \
-          --app $DENO_PROJECT_NAME \
+          $ORG_ARG \
+          --app "$DENO_PROJECT_NAME" \
+          --entrypoint "${{ inputs.entrypoint }}" \
           ${{ inputs.production == 'true' && '--prod' || '' }} \
           ${{ inputs.generateEnv == 'true' && '--env-file=.env' || '' }} \
           --no-wait

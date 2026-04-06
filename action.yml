@@ -6,10 +6,10 @@ inputs:
     required: true
     default: "provision"
   token:
-    description: "Deno Deploy token used for app management, env sync, deploys, deletion, and direct organization inference."
+    description: "Deno Deploy token used for app management, env sync, deploys, deletion, and organization inference."
     required: false
   organization:
-    description: "Optional Deno Deploy organization slug. When omitted, provision infers it directly from the token and requires an unambiguous single-org token."
+    description: "Optional Deno Deploy organization slug. When omitted, provision infers it from the token and falls back to DENO_ORG_NAME when available."
     required: false
   app:
     description: "Optional base Deno Deploy app slug override. Defaults to the sanitized repository name."
@@ -233,6 +233,7 @@ runs:
         DEFAULT_BRANCH: ${{ steps.resolve.outputs.default_branch }}
         DENO_API_TOKEN: ${{ inputs.token }}
         DENO_APP_SLUG: ${{ steps.resolve.outputs.app_slug }}
+        DENO_ORG_NAME: ${{ env.DENO_ORG_NAME }}
         ENTRYPOINT: ${{ inputs.entrypoint }}
         GITHUB_OWNER: ${{ github.repository_owner }}
         GITHUB_REPO: ${{ github.event.repository.name }}
@@ -249,7 +250,7 @@ runs:
           --allow-read="$ACTION_PATH,$GITHUB_WORKSPACE,/proc/version,/proc/sys/fs/binfmt_misc/WSLInterop,/run/WSL" \
           --allow-write="$GITHUB_WORKSPACE,$GITHUB_OUTPUT${GITHUB_STEP_SUMMARY:+,$GITHUB_STEP_SUMMARY}" \
           --allow-run=git,deno \
-          --allow-net=api.deno.com,api.github.com \
+          --allow-net=api.deno.com,api.github.com,console.deno.com \
           "$ACTION_PATH/scripts/provision.js"
 
     - name: Delete branch app and paired dist branch

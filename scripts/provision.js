@@ -1,9 +1,11 @@
 import { isAbsolute, join, relative, resolve } from "jsr:@std/path@1.1.2";
+import { parse as parseJsonc } from "jsr:@std/jsonc";
 import { error, info, notice, setOutput } from "./lib/actions.js";
 import { getBooleanOption, getStringOption, parseArgs, requireString, slugify } from "./lib/cli.js";
-import { inferOrganizationSlugFromToken } from "./lib/deno_cli_orgs.js";
+import { inferOrganizationSlugFromAccessibleApps, inferOrganizationSlugFromApp, inferOrganizationSlugFromToken } from "./lib/deno_cli_orgs.js";
 import { DenoApiClient } from "./lib/deno_api.js";
 import { ensureArtifactBranch, GitHubApiClient } from "./lib/github_api.js";
+import { resolveOrganization } from "./lib/deno_org_resolution.js";
 
 const PLUGIN_MANIFEST_TOOL_SPEC = "@ubiquity-os/plugin-manifest-tool@latest";
 
@@ -421,6 +423,7 @@ function redactEnvVars(envVars) {
 function summarizeDryRun({
   appSlug,
   organization,
+  fallbackOrganization,
   runtimeEnvVars,
   buildEnvVars,
   patchPayload,
@@ -432,8 +435,13 @@ function summarizeDryRun({
   if (organization) {
     info(`Missing-app flow: create app metadata via POST /v2/apps for '${appSlug}', then deno deploy . --config .deno-branch-app.jsonc --prod`);
     info("Existing-app flow: deno deploy . --config .deno-branch-app.jsonc --prod");
+  } else if (fallbackOrganization) {
+    info(
+      `Missing-app flow: organization was not provided, so provision will first infer it from the token and then fall back to DENO_ORG_NAME='${fallbackOrganization}' if inference is unavailable.`,
+    );
+    info("Existing-app flow: deno deploy . --config .deno-branch-app.jsonc --prod");
   } else {
-    info("Missing-app flow: organization was not provided, so provision will infer it directly from the token, create the app via the Deno API, then deploy with --prod.");
+    info("Missing-app flow: organization was not provided, so provision will infer it from the token using the working direct and app-based paths before failing.");
     info("Existing-app flow: deno deploy . --config .deno-branch-app.jsonc --prod");
   }
   info(`Patch payload: ${JSON.stringify({
@@ -450,6 +458,7 @@ async function main() {
     getStringOption(args, "token", "", "") || Deno.env.get("DENO_API_TOKEN") || Deno.env.get("DENO_DEPLOY_TOKEN") || "",
   );
   const organization = getStringOption(args, "organization", "ORGANIZATION");
+  const fallbackOrganization = (Deno.env.get("DENO_ORG_NAME") || "").trim();
   const githubOwner = requireString("github-owner", getStringOption(args, "github-owner", "GITHUB_OWNER"));
   const githubRepo = requireString("github-repo", getStringOption(args, "github-repo", "GITHUB_REPO"));
   const refName = requireString("ref-name", getStringOption(args, "ref-name", "REF_NAME"));
@@ -489,6 +498,7 @@ async function main() {
     summarizeDryRun({
       appSlug,
       organization,
+      fallbackOrganization,
       runtimeEnvVars: [...runtimeEnvVars, ...managedRuntimeEnvVars],
       buildEnvVars,
       patchPayload,
@@ -516,13 +526,36 @@ async function main() {
   });
 
   const existingApp = await deno.getApp(appSlug);
-  let effectiveOrganization = organization;
-  if (!effectiveOrganization) {
-    effectiveOrganization = await inferOrganizationSlugFromToken({
-      token,
-      consoleUrl: denoConsoleUrl,
-    });
-    notice(`Inferred Deno organization '${effectiveOrganization}' directly from the token.`);
+  const { organization: effectiveOrganization, source: organizationSource } = await resolveOrganization({
+    organization,
+    fallbackOrganization,
+    token,
+    repoRoot,
+    appSlug,
+    hasExistingApp: Boolean(existingApp),
+    deno,
+    consoleUrl: denoConsoleUrl,
+    inferFromToken: inferOrganizationSlugFromToken,
+    inferFromApp: inferOrganizationSlugFromApp,
+    inferFromAccessibleApps: inferOrganizationSlugFromAccessibleApps,
+  });
+
+  switch (organizationSource) {
+    case "input":
+      notice(`Using explicit Deno organization '${effectiveOrganization}'.`);
+      break;
+    case "token":
+      notice(`Inferred Deno organization '${effectiveOrganization}' directly from the token.`);
+      break;
+    case "existing-app":
+      notice(`Inferred Deno organization '${effectiveOrganization}' from the existing app '${appSlug}'.`);
+      break;
+    case "accessible-apps":
+      notice(`Inferred Deno organization '${effectiveOrganization}' from accessible Deno apps.`);
+      break;
+    case "env":
+      notice(`Using DENO_ORG_NAME fallback '${effectiveOrganization}' after token inference was unavailable.`);
+      break;
   }
 
   if (!existingApp) {

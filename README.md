@@ -15,7 +15,7 @@ Provisions Deno Deploy apps, syncs Deno environment variables, and maintains `di
 
 - `action`: `provision` or `delete`.
 - `token`: Deno Deploy token used for app management, env sync, deploys, and deletion.
-- `organization`: Optional Deno Deploy organization slug. When omitted, `provision` infers it directly from the token. If the token can access multiple organizations, pass `organization` explicitly.
+- `organization`: Optional Deno Deploy organization slug. When omitted, `provision` first infers it from the token and then falls back to `DENO_ORG_NAME` when available.
 - `app`: Optional base Deno Deploy app slug override. Defaults to the sanitized repository name. `main` uses this value directly; all other branches append a truncated branch suffix within the 32-character total slug cap.
 - `entrypoint`: App runtime entrypoint. Defaults to `src/deno.ts`.
 
@@ -68,6 +68,7 @@ On first provision, this metadata-first create path avoids the extra bootstrap b
 - Run `actions/checkout@v6` before `provision`.
 - Grant `contents: write` so the action can create/update `dist/*` branches.
 - Use a Deno Deploy token with access to the target organization.
+- Optionally wire `DENO_ORG_NAME` from `${{ vars.DENO_ORG_NAME }}` if you want a deterministic fallback when token-based organization inference is unavailable.
 - Configure consumer workflows so `main` and `demo` use the GitHub `main` environment, while all other branches use the GitHub `development` environment.
 
 ## Example Workflow
@@ -93,10 +94,11 @@ jobs:
 
       - uses: ubiquity-os/deno-deploy@main
         env:
+          DENO_ORG_NAME: ${{ vars.DENO_ORG_NAME }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           action: provision
-          token: ${{ secrets.DENO_2_DEPLOY_TOKEN }}
+          token: ${{ secrets.DENO_DEPLOY_TOKEN }}
           app: ${{ vars.DENO_PROJECT_NAME }}
           entrypoint: src/worker.ts
 
@@ -109,10 +111,11 @@ jobs:
     steps:
       - uses: ubiquity-os/deno-deploy@main
         env:
+          DENO_ORG_NAME: ${{ vars.DENO_ORG_NAME }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           action: delete
-          token: ${{ secrets.DENO_2_DEPLOY_TOKEN }}
+          token: ${{ secrets.DENO_DEPLOY_TOKEN }}
           app: ${{ vars.DENO_PROJECT_NAME }}
 ```
 
@@ -124,11 +127,10 @@ deno run \
   --allow-read=.,../command-start-stop,./local.env \
   --allow-write=.,./summary.md \
   --allow-run=git,deno \
-  --allow-net=api.deno.com,api.github.com \
+  --allow-net=api.deno.com,api.github.com,console.deno.com \
   ./scripts/provision.js \
   --repo-root ../command-start-stop \
-  --token "$DENO_API_TOKEN" \
-  --organization ubiquity-os \
+  --token "$DENO_DEPLOY_TOKEN" \
   --github-owner ubiquity-os-marketplace \
   --github-repo command-start-stop \
   --ref-name demo \
@@ -138,5 +140,7 @@ deno run \
   --env-file ./local.env \
   --dry-run
 ```
+
+If token-based organization inference is unavailable locally, set `DENO_ORG_NAME=ubiquity-os` instead of passing `--organization`.
 
 For cross-repo local testing before publishing `@ubiquity-os/plugin-manifest-tool`, you can point `provision` at a local checkout by setting `PLUGIN_MANIFEST_TOOL_PATH=/abs/path/to/plugin-manifest-tool/bin/plugin-manifest-tool.js` and adding `node` to `--allow-run`.

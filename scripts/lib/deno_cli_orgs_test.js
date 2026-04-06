@@ -8,6 +8,16 @@ Deno.test("selectOrganizationSlug returns the only accessible organization slug"
   );
 });
 
+Deno.test("selectOrganizationSlug collapses duplicate organization slugs", () => {
+  assertEquals(
+    selectOrganizationSlug([
+      { slug: "ubiquity-os" },
+      { slug: "ubiquity-os" },
+    ]),
+    "ubiquity-os",
+  );
+});
+
 Deno.test("selectOrganizationSlug rejects tokens with no accessible organizations", () => {
   assertThrows(
     () => selectOrganizationSlug([]),

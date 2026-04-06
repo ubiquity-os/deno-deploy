@@ -15,7 +15,7 @@ Provisions Deno Deploy apps, syncs Deno environment variables, and maintains `di
 
 - `action`: `provision` or `delete`.
 - `token`: Deno Deploy token used for app management, env sync, deploys, and deletion.
-- `organization`: Optional Deno Deploy organization slug. When omitted, `provision` first tries to infer it from the token by switching to an accessible Deno app.
+- `organization`: Optional Deno Deploy organization slug. When omitted, `provision` infers it directly from the token. If the token can access multiple organizations, pass `organization` explicitly.
 - `app`: Optional base Deno Deploy app slug override. Defaults to the sanitized repository name. `main` uses this value directly; all other branches append a truncated branch suffix within the 32-character total slug cap.
 - `entrypoint`: App runtime entrypoint. Defaults to `src/deno.ts`.
 
@@ -59,9 +59,7 @@ During `provision`, the action runs:
 - `deno deploy . --config .deno-branch-app.jsonc --prod` as the single production deployment step for both newly created and existing branch apps
 - `deno install`
 - `deno x -y @ubiquity-os/plugin-manifest-tool@latest`
-- `deno deploy switch --app <slug>` with `DENO_DEPLOY_TOKEN` in the child environment when it needs to infer the organization for an existing app
-
-This can create or update `manifest.json`, `deno.jsonc`, `.deno-branch-app.jsonc`, `node_modules`, and related install artifacts in the checked-out workspace. Before each direct deploy, the action removes `node_modules` so Deno uploads only the workspace source, then deletes `.deno-branch-app.jsonc` after the deploy attempt.
+This can create or update `manifest.json`, `.deno-branch-app.jsonc`, `node_modules`, and related install artifacts in the checked-out workspace. Before each direct deploy, the action removes `node_modules` so Deno uploads only the workspace source, then deletes `.deno-branch-app.jsonc` after the deploy attempt.
 
 On first provision, this metadata-first create path avoids the extra bootstrap build that `deno deploy create --source local` would otherwise start before the explicit `--prod` deploy.
 

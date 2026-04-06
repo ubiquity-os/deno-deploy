@@ -6,10 +6,10 @@ inputs:
     required: true
     default: "provision"
   token:
-    description: "Deno Deploy token used for app management, env sync, deploys, deletion, and deno deploy switch."
+    description: "Deno Deploy token used for app management, env sync, deploys, deletion, and direct organization inference."
     required: false
   organization:
-    description: "Optional Deno Deploy organization slug. When omitted, provision tries to infer it from the token using an accessible Deno app."
+    description: "Optional Deno Deploy organization slug. When omitted, provision infers it directly from the token and requires an unambiguous single-org token."
     required: false
   app:
     description: "Optional base Deno Deploy app slug override. Defaults to the sanitized repository name."

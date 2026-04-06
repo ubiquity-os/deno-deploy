@@ -1,7 +1,7 @@
-import { join } from "jsr:@std/path@1.1.2";
-import { parse as parseJsonc } from "jsr:@std/jsonc";
+import { join, resolve } from "jsr:@std/path@1.1.2";
 import { error, info, notice, setOutput } from "./lib/actions.js";
 import { getBooleanOption, getStringOption, parseArgs, requireString, slugify } from "./lib/cli.js";
+import { inferOrganizationSlugFromToken } from "./lib/deno_cli_orgs.js";
 import { DenoApiClient } from "./lib/deno_api.js";
 import { ensureArtifactBranch, GitHubApiClient } from "./lib/github_api.js";
 
@@ -332,68 +332,6 @@ async function deployBranchApp({
   }
 }
 
-async function inferDenoAppSettings({ repoRoot, token, appSlug }) {
-  await runCommand({
-    command: "deno",
-    args: ["deploy", "switch", "--app", appSlug],
-    cwd: repoRoot,
-    env: {
-      DENO_DEPLOY_TOKEN: token,
-    },
-    description: "deno deploy switch",
-  });
-
-  const configPath = join(repoRoot, "deno.jsonc");
-  const configText = await Deno.readTextFile(configPath);
-  const config = parseJsonc(configText);
-  const organization = config?.deploy?.org;
-  const inferredApp = config?.deploy?.app;
-
-  if (typeof organization !== "string" || !organization) {
-    throw new Error(`Unable to resolve 'deploy.org' from '${configPath}'.`);
-  }
-
-  return {
-    organization,
-    appSlug: typeof inferredApp === "string" && inferredApp ? inferredApp : appSlug,
-  };
-}
-
-async function inferOrganizationFromToken({ repoRoot, token, deno }) {
-  const apps = await deno.listApps();
-  const probeApp = Array.isArray(apps)
-    ? apps.find((app) => typeof app?.slug === "string" && app.slug)
-    : null;
-
-  if (!probeApp?.slug) {
-    throw new Error(
-      "organization was not provided and could not be inferred from the token because no accessible Deno apps were found.",
-    );
-  }
-
-  await runCommand({
-    command: "deno",
-    args: ["deploy", "switch", "--app", probeApp.slug],
-    cwd: repoRoot,
-    env: {
-      DENO_DEPLOY_TOKEN: token,
-    },
-    description: `deno deploy switch for organization inference using '${probeApp.slug}'`,
-  });
-
-  const configPath = join(repoRoot, "deno.jsonc");
-  const configText = await Deno.readTextFile(configPath);
-  const config = parseJsonc(configText);
-  const organization = config?.deploy?.org;
-
-  if (typeof organization !== "string" || !organization) {
-    throw new Error(`Unable to resolve 'deploy.org' from '${configPath}' after token-based inference.`);
-  }
-
-  notice(`Inferred Deno organization '${organization}' from the token using existing app '${probeApp.slug}'.`);
-  return organization;
-}
-
 async function publishManifestArtifact({
   github,
   repoRoot,
@@ -475,7 +413,7 @@ function summarizeDryRun({
     info(`Missing-app flow: create app metadata via POST /v2/apps for '${appSlug}', then deno deploy . --config .deno-branch-app.jsonc --prod`);
     info("Existing-app flow: deno deploy . --config .deno-branch-app.jsonc --prod");
   } else {
-    info("Missing-app flow: organization was not provided, so provision will infer it from the token, create the app via the Deno API, then deploy with --prod.");
+    info("Missing-app flow: organization was not provided, so provision will infer it directly from the token, create the app via the Deno API, then deploy with --prod.");
     info("Existing-app flow: deno deploy . --config .deno-branch-app.jsonc --prod");
   }
   info(`Patch payload: ${JSON.stringify({
@@ -486,7 +424,7 @@ function summarizeDryRun({
 
 async function main() {
   const args = parseArgs(Deno.args);
-  const repoRoot = getStringOption(args, "repo-root", "REPO_ROOT", Deno.cwd());
+  const repoRoot = resolve(getStringOption(args, "repo-root", "REPO_ROOT", Deno.cwd()));
   const token = requireString(
     "token",
     getStringOption(args, "token", "", "") || Deno.env.get("DENO_API_TOKEN") || Deno.env.get("DENO_DEPLOY_TOKEN") || "",
@@ -501,6 +439,7 @@ async function main() {
   const githubToken = getStringOption(args, "github-token", "GITHUB_TOKEN");
   const dryRun = getBooleanOption(args, "dry-run", "DRY_RUN", false);
   const denoApiBaseUrl = getStringOption(args, "deno-api-base-url", "DENO_API_BASE_URL", "https://api.deno.com");
+  const denoConsoleUrl = getStringOption(args, "deno-console-url", "DENO_CONSOLE_URL", "https://console.deno.com");
   const githubApiBaseUrl = getStringOption(args, "github-api-base-url", "GITHUB_API_URL", "https://api.github.com");
   const envFilePath = getStringOption(args, "env-file", "ENV_FILE");
   const manifestToolPath = getStringOption(args, "manifest-tool-path", "PLUGIN_MANIFEST_TOOL_PATH");
@@ -555,14 +494,15 @@ async function main() {
 
   const existingApp = await deno.getApp(appSlug);
   let effectiveOrganization = organization;
+  if (!effectiveOrganization) {
+    effectiveOrganization = await inferOrganizationSlugFromToken({
+      token,
+      consoleUrl: denoConsoleUrl,
+    });
+    notice(`Inferred Deno organization '${effectiveOrganization}' directly from the token.`);
+  }
+
   if (!existingApp) {
-    if (!effectiveOrganization) {
-      effectiveOrganization = await inferOrganizationFromToken({
-        repoRoot,
-        token,
-        deno,
-      });
-    }
     notice(`Creating Deno app '${appSlug}' via the Deno API before the first production deploy.`);
     await createDenoApp({
       deno,
@@ -571,14 +511,6 @@ async function main() {
     });
   } else {
     notice(`Updating Deno app '${appSlug}'.`);
-    if (!effectiveOrganization) {
-      const inferredSettings = await inferDenoAppSettings({
-        repoRoot,
-        token,
-        appSlug,
-      });
-      effectiveOrganization = inferredSettings.organization;
-    }
     await deno.patchApp(appSlug, patchPayload);
   }
 

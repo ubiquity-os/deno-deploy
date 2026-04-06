@@ -18,10 +18,6 @@ inputs:
     description: "Entrypoint used for the app runtime configuration."
     required: false
     default: "src/deno.ts"
-  syncEnv:
-    description: "Whether to sync workflow runtime environment variables during provisioning."
-    required: false
-    default: "true"
 outputs:
   app_slug:
     description: "Resolved Deno Deploy app slug."
@@ -244,7 +240,6 @@ runs:
         ORGANIZATION: ${{ inputs.organization }}
         REF_NAME: ${{ steps.resolve.outputs.ref_name }}
         REPO_ROOT: ${{ github.workspace }}
-        SYNC_ENV: ${{ inputs.syncEnv }}
       run: |
         set -euo pipefail
 

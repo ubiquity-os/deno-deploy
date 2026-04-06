@@ -1,6 +1,6 @@
 import { join } from "jsr:@std/path@1.1.2";
 import { parse as parseJsonc } from "jsr:@std/jsonc";
-import { appendSummary, error, info, notice, setOutput } from "./lib/actions.js";
+import { error, info, notice, setOutput } from "./lib/actions.js";
 import { getBooleanOption, getStringOption, parseArgs, requireString, slugify } from "./lib/cli.js";
 import { DenoApiClient } from "./lib/deno_api.js";
 import { ensureArtifactBranch, GitHubApiClient } from "./lib/github_api.js";
@@ -487,41 +487,16 @@ function summarizeDryRun({
   info(`Runtime environment variable count: ${runtimeEnvVars.length}`);
   info(`Build environment variable count: ${buildEnvVars.length}`);
   if (organization) {
-    info(`Create flow: deno deploy create --source local ... --org ${organization} --app ${appSlug}`);
-    info(`Deploy flow for existing apps: deno deploy . --config .deno-branch-app.jsonc --prod`);
+    info(`Missing-app flow: deno deploy create --source local ... --org ${organization} --app ${appSlug}, then deno deploy . --config .deno-branch-app.jsonc --prod`);
+    info("Existing-app flow: deno deploy . --config .deno-branch-app.jsonc --prod");
   } else {
-    info("Create flow: organization was not provided, so provision will try to infer it from the token using an accessible Deno app.");
+    info("Missing-app flow: organization was not provided, so provision will infer it from the token, create the app, then deploy with --prod.");
+    info("Existing-app flow: deno deploy . --config .deno-branch-app.jsonc --prod");
   }
   info(`Patch payload: ${JSON.stringify({
     ...patchPayload,
     env_vars: redactEnvVars(patchPayload.env_vars || []),
   }, null, 2)}`);
-}
-
-async function appendProvisionSummary({
-  createdApp,
-  artifactBranch,
-  hasHomepageUrl,
-}) {
-  const lines = [];
-
-  if (createdApp) {
-    lines.push(
-      "Scaffolded a new branch Deno app with local source. This first provision run does not run a deploy.",
-    );
-  }
-
-  if (artifactBranch && !hasHomepageUrl) {
-    lines.push(
-      `Published baseline manifest to \`${artifactBranch}\` without \`homepage_url\`. It will be populated after the next successful deploy for this branch app.`,
-    );
-  }
-
-  if (lines.length === 0) {
-    return;
-  }
-
-  await appendSummary(lines.map((line) => `- ${line}`).join("\n"));
 }
 
 async function main() {
@@ -540,7 +515,6 @@ async function main() {
   const appSlug = slugify(getStringOption(args, "app", "DENO_APP_SLUG", githubRepo));
   const githubToken = getStringOption(args, "github-token", "GITHUB_TOKEN");
   const dryRun = getBooleanOption(args, "dry-run", "DRY_RUN", false);
-  const syncEnv = getBooleanOption(args, "sync-env", "SYNC_ENV", true);
   const denoApiBaseUrl = getStringOption(args, "deno-api-base-url", "DENO_API_BASE_URL", "https://api.deno.com");
   const githubApiBaseUrl = getStringOption(args, "github-api-base-url", "GITHUB_API_URL", "https://api.github.com");
   const envFilePath = getStringOption(args, "env-file", "ENV_FILE");
@@ -550,7 +524,7 @@ async function main() {
   const repository = `${githubOwner}/${githubRepo}`;
 
   const environmentSource = await loadEnvironmentSource(envFilePath);
-  const runtimeEnvVars = syncEnv ? collectRuntimeEnvironmentVariables(contextName, environmentSource) : [];
+  const runtimeEnvVars = collectRuntimeEnvironmentVariables(contextName, environmentSource);
   const buildEnvVars = collectBuildEnvironmentVariables({
     repository,
   });
@@ -590,9 +564,7 @@ async function main() {
   });
 
   const existingApp = await deno.getApp(appSlug);
-  let createdApp = false;
   let effectiveOrganization = organization;
-  let homepageUrl = null;
   if (!existingApp) {
     if (!effectiveOrganization) {
       effectiveOrganization = await inferOrganizationFromToken({
@@ -610,10 +582,6 @@ async function main() {
       entrypoint,
       repository,
     });
-    createdApp = true;
-    notice(
-      `Scaffolded Deno app '${appSlug}' without deploying it. homepage_url will remain empty until the next successful deploy for this branch app.`,
-    );
   } else {
     notice(`Updating Deno app '${appSlug}'.`);
     if (!effectiveOrganization) {
@@ -629,39 +597,25 @@ async function main() {
   await deno.patchApp(appSlug, patchPayload);
   await setOutput("app_slug", appSlug);
 
-  if (!createdApp) {
-    notice(`Deploying existing Deno branch app '${appSlug}'.`);
-    await deployBranchApp({
-      repoRoot,
-      token,
-      organization: effectiveOrganization,
-      appSlug,
-      entrypoint,
-    });
-    homepageUrl = `https://${appSlug}.${effectiveOrganization}.deno.net`;
-    await writeWorkspaceManifestHomepage(repoRoot, homepageUrl);
-    await setOutput("homepage_url", homepageUrl);
-    notice(`Deployed '${appSlug}' and updated workspace manifest homepage_url to '${homepageUrl}'.`);
-  }
+  notice(`Deploying Deno branch app '${appSlug}'.`);
+  await deployBranchApp({
+    repoRoot,
+    token,
+    organization: effectiveOrganization,
+    appSlug,
+    entrypoint,
+  });
+  const homepageUrl = `https://${appSlug}.${effectiveOrganization}.deno.net`;
+  await writeWorkspaceManifestHomepage(repoRoot, homepageUrl);
+  await setOutput("homepage_url", homepageUrl);
+  notice(`Deployed '${appSlug}' and updated workspace manifest homepage_url to '${homepageUrl}'.`);
 
-  const manifestPublishResult = await publishManifestArtifact({
+  await publishManifestArtifact({
     github,
     repoRoot,
     sourceBranch: refName,
     defaultBranch,
     artifactBranch,
-  });
-
-  if (manifestPublishResult?.artifactBranch && !manifestPublishResult.hasHomepageUrl) {
-    notice(
-      `The published manifest on '${manifestPublishResult.artifactBranch}' does not include homepage_url yet. It will be populated after the next successful deploy for this branch app.`,
-    );
-  }
-
-  await appendProvisionSummary({
-    createdApp,
-    artifactBranch: manifestPublishResult?.artifactBranch || null,
-    hasHomepageUrl: Boolean(manifestPublishResult?.hasHomepageUrl),
   });
 }
 

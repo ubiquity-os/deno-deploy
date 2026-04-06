@@ -7,10 +7,9 @@ Provisions Deno Deploy apps, syncs Deno environment variables, and maintains `di
 - One local-source Deno Deploy app is managed per Git branch.
 - `main` uses the unsuffixed base app slug. Every other branch uses `<base-app>-<branch-suffix>`, capped at 32 total characters.
 - Long branch names are truncated to fit the 32-character cap. No hash or other disambiguator is appended, so collisions are accepted by design.
-- `provision` creates a missing branch app when needed, patches dashboard build/runtime config, syncs runtime and build env vars to Deno `production`, deploys existing branch apps from the current workspace, generates `manifest.json` in GitHub Actions, and publishes it to `dist/<branch>`.
+- `provision` creates a missing branch app when needed, patches dashboard build/runtime config, always syncs runtime and build env vars to Deno `production`, deploys the branch app from the current workspace with `--prod`, generates `manifest.json` in GitHub Actions, and publishes it to `dist/<branch>`.
 - After a successful deploy, `provision` updates `dist/<branch>/manifest.json` inline with the stable branch app URL `https://<app-slug>.<org-slug>.deno.net`.
 - `delete` removes both the paired Deno branch app and the paired `dist/<branch>` branch.
-- The first scaffold run for a missing branch app does not run a deploy, so `homepage_url` in `dist/*` can legitimately remain empty until the next successful deploy for that branch app.
 
 ## Inputs
 
@@ -19,7 +18,6 @@ Provisions Deno Deploy apps, syncs Deno environment variables, and maintains `di
 - `organization`: Optional Deno Deploy organization slug. When omitted, `provision` first tries to infer it from the token by switching to an accessible Deno app.
 - `app`: Optional base Deno Deploy app slug override. Defaults to the sanitized repository name. `main` uses this value directly; all other branches append a truncated branch suffix within the 32-character total slug cap.
 - `entrypoint`: App runtime entrypoint. Defaults to `src/deno.ts`.
-- `syncEnv`: Whether to sync workflow runtime env vars during `provision`. Defaults to `true`.
 
 ## Outputs
 
@@ -29,13 +27,13 @@ Provisions Deno Deploy apps, syncs Deno environment variables, and maintains `di
 ## Environment Sync
 
 - Runtime env vars always go to Deno `production` in this branch-per-app model.
+- Runtime env vars are always synced during `provision`.
 - GitHub environment selection still happens in the consumer workflow:
   - `main` and `demo` should use the GitHub `main` environment
   - all other branches should use the GitHub `development` environment
 - Build-only env vars are always synced:
   - `PLUGIN_MANIFEST_REPOSITORY`
   - `PLUGIN_MANIFEST_PRODUCTION_BRANCH=main`
-- `syncEnv: false` disables workflow runtime env upload only. The internal build metadata vars above are still managed.
 - Reserved `DENO_*` names from the workflow environment are excluded automatically.
 
 ## Build Config
@@ -55,7 +53,7 @@ Do not commit a `deploy` block in tracked `deno.json` or `deno.jsonc`. `provisio
 During `provision`, the action runs:
 
 - `deno deploy create --source local ...` when the app does not exist yet
-- `deno deploy . --config .deno-branch-app.jsonc --prod` for existing branch apps
+- `deno deploy . --config .deno-branch-app.jsonc --prod` after patching the app, for both newly created and existing branch apps
 - `deno install`
 - `deno x -y @ubiquity-os/plugin-manifest-tool@latest`
 - `deno deploy switch --app <slug>` with `DENO_DEPLOY_TOKEN` in the child environment when it needs to infer the organization for an existing app
@@ -64,7 +62,7 @@ This can create or update `manifest.json`, `deno.jsonc`, `.deno-branch-app.jsonc
 
 ## Requirements
 
-- Run `actions/checkout@v4` before `provision`.
+- Run `actions/checkout@v6` before `provision`.
 - Grant `contents: write` so the action can create/update `dist/*` branches.
 - Use a Deno Deploy token with access to the target organization.
 - Configure consumer workflows so `main` and `demo` use the GitHub `main` environment, while all other branches use the GitHub `development` environment.
@@ -88,7 +86,7 @@ jobs:
       contents: write
     environment: ${{ (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/demo') && 'main' || 'development' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: ubiquity-os/deno-deploy@main
         env:

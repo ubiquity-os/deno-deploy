@@ -331,6 +331,7 @@ async function deployBranchApp({
     await runCommand({
       command: "deno",
       args: [
+        "--unstable-kv",
         "deploy",
         ".",
         "--config",
@@ -433,16 +434,16 @@ function summarizeDryRun({
   info(`Runtime environment variable count: ${runtimeEnvVars.length}`);
   info(`Build environment variable count: ${buildEnvVars.length}`);
   if (organization) {
-    info(`Missing-app flow: create app metadata via POST /v2/apps for '${appSlug}', then deno deploy . --config .deno-branch-app.jsonc --prod`);
-    info("Existing-app flow: deno deploy . --config .deno-branch-app.jsonc --prod");
+    info(`Missing-app flow: create app metadata via POST /v2/apps for '${appSlug}', then deno --unstable-kv deploy . --config .deno-branch-app.jsonc --prod`);
+    info("Existing-app flow: deno --unstable-kv deploy . --config .deno-branch-app.jsonc --prod");
   } else if (fallbackOrganization) {
     info(
       `Missing-app flow: organization was not provided, so provision will first infer it from the token and then fall back to DENO_ORG_NAME='${fallbackOrganization}' if inference is unavailable.`,
     );
-    info("Existing-app flow: deno deploy . --config .deno-branch-app.jsonc --prod");
+    info("Existing-app flow: deno --unstable-kv deploy . --config .deno-branch-app.jsonc --prod");
   } else {
     info("Missing-app flow: organization was not provided, so provision will infer it from the token using the working direct and app-based paths before failing.");
-    info("Existing-app flow: deno deploy . --config .deno-branch-app.jsonc --prod");
+    info("Existing-app flow: deno --unstable-kv deploy . --config .deno-branch-app.jsonc --prod");
   }
   info(`Patch payload: ${JSON.stringify({
     ...patchPayload,

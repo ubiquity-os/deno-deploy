@@ -81,6 +81,7 @@ function collectRuntimeEnvironmentVariables(contextName, environmentSource) {
     "EXCLUDE_SUPPORTED_EVENTS",
     "GH_TOKEN",
     "GITHUB_TOKEN",
+    "REF_NAME",
     "SKIP_BOT_EVENTS",
   ]);
 
@@ -100,7 +101,18 @@ function collectRuntimeEnvironmentVariables(contextName, environmentSource) {
   }));
 }
 
-function collectBuildEnvironmentVariables({ repository }) {
+function collectManagedRuntimeEnvironmentVariables({ contextName, refName }) {
+  return [
+    {
+      key: "REF_NAME",
+      value: refName,
+      secret: false,
+      contexts: [contextName],
+    },
+  ];
+}
+
+function collectBuildEnvironmentVariables({ repository, refName }) {
   const envVars = [
     {
       key: "PLUGIN_MANIFEST_PRODUCTION_BRANCH",
@@ -111,6 +123,12 @@ function collectBuildEnvironmentVariables({ repository }) {
     {
       key: "PLUGIN_MANIFEST_REPOSITORY",
       value: repository,
+      secret: false,
+      contexts: ["build"],
+    },
+    {
+      key: "REF_NAME",
+      value: refName,
       secret: false,
       contexts: ["build"],
     },
@@ -492,19 +510,24 @@ async function main() {
 
   const environmentSource = await loadEnvironmentSource(envFilePath);
   const runtimeEnvVars = collectRuntimeEnvironmentVariables(contextName, environmentSource);
+  const managedRuntimeEnvVars = collectManagedRuntimeEnvironmentVariables({
+    contextName,
+    refName,
+  });
   const buildEnvVars = collectBuildEnvironmentVariables({
     repository,
+    refName,
   });
   const patchPayload = {
     config: buildConfig(entrypoint, repository),
-    env_vars: [...runtimeEnvVars, ...buildEnvVars],
+    env_vars: [...runtimeEnvVars, ...managedRuntimeEnvVars, ...buildEnvVars],
   };
 
   if (dryRun) {
     summarizeDryRun({
       appSlug,
       organization,
-      runtimeEnvVars,
+      runtimeEnvVars: [...runtimeEnvVars, ...managedRuntimeEnvVars],
       buildEnvVars,
       patchPayload,
     });

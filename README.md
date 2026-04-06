@@ -31,6 +31,8 @@ Provisions Deno Deploy apps, syncs Deno environment variables, and maintains `di
 - GitHub environment selection still happens in the consumer workflow:
   - `main` and `demo` should use the GitHub `main` environment
   - all other branches should use the GitHub `development` environment
+- Managed manifest identity env vars are always synced:
+  - `REF_NAME` to both runtime `production` and build
 - Build-only env vars are always synced:
   - `PLUGIN_MANIFEST_REPOSITORY`
   - `PLUGIN_MANIFEST_PRODUCTION_BRANCH=main`

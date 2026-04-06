@@ -5,7 +5,8 @@ Provisions Deno Deploy apps, syncs Deno environment variables, and maintains `di
 ## Behavior
 
 - One local-source Deno Deploy app is managed per Git branch.
-- `main` uses the unsuffixed base app slug. Every other branch uses `<base-app>-<branch-suffix>`.
+- `main` uses the unsuffixed base app slug. Every other branch uses `<base-app>-<branch-suffix>`, capped at 32 total characters.
+- Long branch names are truncated to fit the 32-character cap. No hash or other disambiguator is appended, so collisions are accepted by design.
 - `provision` creates a missing branch app when needed, patches dashboard build/runtime config, syncs runtime and build env vars to Deno `production`, deploys existing branch apps from the current workspace, generates `manifest.json` in GitHub Actions, and publishes it to `dist/<branch>`.
 - After a successful deploy, `provision` updates `dist/<branch>/manifest.json` inline with the stable branch app URL `https://<app-slug>.<org-slug>.deno.net`.
 - `delete` removes both the paired Deno branch app and the paired `dist/<branch>` branch.
@@ -16,7 +17,7 @@ Provisions Deno Deploy apps, syncs Deno environment variables, and maintains `di
 - `action`: `provision` or `delete`.
 - `token`: Deno Deploy token used for app management, env sync, deploys, and deletion.
 - `organization`: Optional Deno Deploy organization slug. When omitted, `provision` first tries to infer it from the token by switching to an accessible Deno app.
-- `app`: Optional base Deno Deploy app slug override. Defaults to the sanitized repository name. `main` uses this value directly; all other branches append a truncated branch suffix.
+- `app`: Optional base Deno Deploy app slug override. Defaults to the sanitized repository name. `main` uses this value directly; all other branches append a truncated branch suffix within the 32-character total slug cap.
 - `entrypoint`: App runtime entrypoint. Defaults to `src/deno.ts`.
 - `syncEnv`: Whether to sync workflow runtime env vars during `provision`. Defaults to `true`.
 

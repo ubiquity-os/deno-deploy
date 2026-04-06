@@ -1,4 +1,4 @@
-import { join, resolve } from "jsr:@std/path@1.1.2";
+import { isAbsolute, join, relative, resolve } from "jsr:@std/path@1.1.2";
 import { error, info, notice, setOutput } from "./lib/actions.js";
 import { getBooleanOption, getStringOption, parseArgs, requireString, slugify } from "./lib/cli.js";
 import { inferOrganizationSlugFromToken } from "./lib/deno_cli_orgs.js";
@@ -144,6 +144,26 @@ function buildConfig(entrypoint, repository) {
       entrypoint,
     },
   };
+}
+
+function normalizeEntrypoint(repoRoot, entrypoint) {
+  if (!isAbsolute(entrypoint)) {
+    return entrypoint.replaceAll("\\", "/");
+  }
+
+  const relativeEntrypoint = relative(repoRoot, entrypoint).replaceAll("\\", "/");
+  if (
+    !relativeEntrypoint ||
+    relativeEntrypoint === "." ||
+    relativeEntrypoint.startsWith("../") ||
+    relativeEntrypoint === ".."
+  ) {
+    throw new Error(
+      `Entrypoint '${entrypoint}' must be relative to the repository root '${repoRoot}' when using an absolute path.`,
+    );
+  }
+
+  return relativeEntrypoint;
 }
 
 async function readWorkspaceManifest(repoRoot) {
@@ -434,7 +454,10 @@ async function main() {
   const githubRepo = requireString("github-repo", getStringOption(args, "github-repo", "GITHUB_REPO"));
   const refName = requireString("ref-name", getStringOption(args, "ref-name", "REF_NAME"));
   const defaultBranch = requireString("default-branch", getStringOption(args, "default-branch", "DEFAULT_BRANCH"));
-  const entrypoint = getStringOption(args, "entrypoint", "ENTRYPOINT", "src/deno.ts");
+  const entrypoint = normalizeEntrypoint(
+    repoRoot,
+    getStringOption(args, "entrypoint", "ENTRYPOINT", "src/deno.ts"),
+  );
   const appSlug = slugify(getStringOption(args, "app", "DENO_APP_SLUG", githubRepo));
   const githubToken = getStringOption(args, "github-token", "GITHUB_TOKEN");
   const dryRun = getBooleanOption(args, "dry-run", "DRY_RUN", false);

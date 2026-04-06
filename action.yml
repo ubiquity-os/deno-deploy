@@ -245,6 +245,7 @@ runs:
 
         deno run \
           --allow-env \
+          --allow-sys=osRelease \
           --allow-read="$ACTION_PATH,$GITHUB_WORKSPACE" \
           --allow-write="$GITHUB_WORKSPACE,$GITHUB_OUTPUT${GITHUB_STEP_SUMMARY:+,$GITHUB_STEP_SUMMARY}" \
           --allow-run=git,deno \

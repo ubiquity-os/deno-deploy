@@ -7,7 +7,7 @@ Provisions Deno Deploy apps, syncs Deno environment variables, and maintains `di
 - One local-source Deno Deploy app is managed per Git branch.
 - `main` uses the unsuffixed base app slug. Every other branch uses `<base-app>-<branch-suffix>`, capped at 32 total characters.
 - Long branch names are truncated to fit the 32-character cap. No hash or other disambiguator is appended, so collisions are accepted by design.
-- `provision` creates a missing branch app when needed, patches dashboard build/runtime config, always syncs runtime and build env vars to Deno `production`, deploys the branch app from the current workspace with `--prod`, generates `manifest.json` in GitHub Actions, and publishes it to `dist/<branch>`.
+- `provision` creates a missing branch app through the Deno API when needed, always syncs runtime and build env vars to Deno `production`, deploys the branch app from the current workspace with `--prod`, generates `manifest.json` in GitHub Actions, and publishes it to `dist/<branch>`.
 - After a successful deploy, `provision` updates `dist/<branch>/manifest.json` inline with the stable branch app URL `https://<app-slug>.<org-slug>.deno.net`.
 - `delete` removes both the paired Deno branch app and the paired `dist/<branch>` branch.
 
@@ -52,13 +52,16 @@ Do not commit a `deploy` block in tracked `deno.json` or `deno.jsonc`. `provisio
 
 During `provision`, the action runs:
 
-- `deno deploy create --source local ...` when the app does not exist yet
-- `deno deploy . --config .deno-branch-app.jsonc --prod` after patching the app, for both newly created and existing branch apps
+- `POST /v2/apps` when the app does not exist yet, using the managed config and synced env vars as app defaults
+- `PATCH /v2/apps/{slug}` for existing apps before deploy
+- `deno deploy . --config .deno-branch-app.jsonc --prod` as the single production deployment step for both newly created and existing branch apps
 - `deno install`
 - `deno x -y @ubiquity-os/plugin-manifest-tool@latest`
 - `deno deploy switch --app <slug>` with `DENO_DEPLOY_TOKEN` in the child environment when it needs to infer the organization for an existing app
 
 This can create or update `manifest.json`, `deno.jsonc`, `.deno-branch-app.jsonc`, `node_modules`, and related install artifacts in the checked-out workspace. Before each direct deploy, the action removes `node_modules` so Deno uploads only the workspace source, then deletes `.deno-branch-app.jsonc` after the deploy attempt.
+
+On first provision, this metadata-first create path avoids the extra bootstrap build that `deno deploy create --source local` would otherwise start before the explicit `--prod` deploy.
 
 ## Requirements
 

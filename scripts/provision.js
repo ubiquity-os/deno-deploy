@@ -245,46 +245,13 @@ async function prepareWorkspaceManifest(repoRoot, manifestToolPath) {
 }
 
 async function createDenoApp({
-  repoRoot,
-  token,
-  organization,
+  deno,
   appSlug,
-  entrypoint,
-  repository,
+  payload,
 }) {
-  const appConfig = buildManagedCommands(repository);
-  await runCommand({
-    command: "deno",
-    args: [
-      "deploy",
-      "create",
-      "--source",
-      "local",
-      "--org",
-      organization,
-      "--app",
-      appSlug,
-      "--app-directory",
-      ".",
-      "--runtime-mode",
-      "dynamic",
-      "--entrypoint",
-      entrypoint,
-      "--region",
-      "global",
-      "--no-wait",
-      "--install-command",
-      appConfig.install,
-      "--build-command",
-      appConfig.build,
-      "--pre-deploy-command",
-      appConfig.predeploy,
-    ],
-    cwd: repoRoot,
-    env: {
-      DENO_DEPLOY_TOKEN: token,
-    },
-    description: `create Deno app '${appSlug}'`,
+  return deno.createApp({
+    slug: appSlug,
+    ...payload,
   });
 }
 
@@ -487,10 +454,10 @@ function summarizeDryRun({
   info(`Runtime environment variable count: ${runtimeEnvVars.length}`);
   info(`Build environment variable count: ${buildEnvVars.length}`);
   if (organization) {
-    info(`Missing-app flow: deno deploy create --source local ... --org ${organization} --app ${appSlug}, then deno deploy . --config .deno-branch-app.jsonc --prod`);
+    info(`Missing-app flow: create app metadata via POST /v2/apps for '${appSlug}', then deno deploy . --config .deno-branch-app.jsonc --prod`);
     info("Existing-app flow: deno deploy . --config .deno-branch-app.jsonc --prod");
   } else {
-    info("Missing-app flow: organization was not provided, so provision will infer it from the token, create the app, then deploy with --prod.");
+    info("Missing-app flow: organization was not provided, so provision will infer it from the token, create the app via the Deno API, then deploy with --prod.");
     info("Existing-app flow: deno deploy . --config .deno-branch-app.jsonc --prod");
   }
   info(`Patch payload: ${JSON.stringify({
@@ -573,14 +540,11 @@ async function main() {
         deno,
       });
     }
-    notice(`Creating Deno app '${appSlug}' with local source bootstrap.`);
+    notice(`Creating Deno app '${appSlug}' via the Deno API before the first production deploy.`);
     await createDenoApp({
-      repoRoot,
-      token,
-      organization: effectiveOrganization,
+      deno,
       appSlug,
-      entrypoint,
-      repository,
+      payload: patchPayload,
     });
   } else {
     notice(`Updating Deno app '${appSlug}'.`);
@@ -592,9 +556,9 @@ async function main() {
       });
       effectiveOrganization = inferredSettings.organization;
     }
+    await deno.patchApp(appSlug, patchPayload);
   }
 
-  await deno.patchApp(appSlug, patchPayload);
   await setOutput("app_slug", appSlug);
 
   notice(`Deploying Deno branch app '${appSlug}'.`);

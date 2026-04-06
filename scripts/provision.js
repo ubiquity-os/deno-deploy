@@ -1,6 +1,6 @@
 import { join } from "jsr:@std/path@1.1.2";
 import { parse as parseJsonc } from "jsr:@std/jsonc";
-import { appendSummary, error, info, notice, setOutput, warning } from "./lib/actions.js";
+import { appendSummary, error, info, notice, setOutput } from "./lib/actions.js";
 import { getBooleanOption, getStringOption, parseArgs, requireString, slugify } from "./lib/cli.js";
 import { DenoApiClient } from "./lib/deno_api.js";
 import { ensureArtifactBranch, GitHubApiClient } from "./lib/github_api.js";
@@ -153,6 +153,18 @@ function manifestHasHomepageUrl(content) {
   }
 }
 
+function updateManifestHomepage(content, homepageUrl) {
+  let manifest;
+  try {
+    manifest = JSON.parse(content);
+  } catch (caughtError) {
+    throw new Error(`Invalid JSON in manifest.json: ${caughtError.message}`);
+  }
+
+  manifest.homepage_url = homepageUrl;
+  return `${JSON.stringify(manifest, null, 2)}\n`;
+}
+
 async function runCommand({ command, args, cwd, env = {}, description }) {
   const process = new Deno.Command(command, {
     args,
@@ -276,7 +288,7 @@ async function createDenoApp({
   });
 }
 
-async function bootstrapProductionDeployment({
+async function deployBranchApp({
   repoRoot,
   token,
   organization,
@@ -284,11 +296,11 @@ async function bootstrapProductionDeployment({
   entrypoint,
 }) {
   const nodeModulesPath = join(repoRoot, "node_modules");
-  const bootstrapConfigPath = join(repoRoot, ".deno-bootstrap.jsonc");
+  const deployConfigPath = join(repoRoot, ".deno-branch-app.jsonc");
   try {
     const nodeModulesInfo = await Deno.stat(nodeModulesPath);
     if (nodeModulesInfo.isDirectory) {
-      notice("Removing node_modules before the explicit bootstrap deploy so Deno uploads only the workspace source.");
+      notice("Removing node_modules before deploy so Deno uploads only the workspace source.");
       await Deno.remove(nodeModulesPath, { recursive: true });
     }
   } catch (caughtError) {
@@ -298,7 +310,7 @@ async function bootstrapProductionDeployment({
   }
 
   await Deno.writeTextFile(
-    bootstrapConfigPath,
+    deployConfigPath,
     `${JSON.stringify({
       deploy: {
         org: organization,
@@ -315,18 +327,18 @@ async function bootstrapProductionDeployment({
         "deploy",
         ".",
         "--config",
-        bootstrapConfigPath,
+        deployConfigPath,
         "--prod",
       ],
       cwd: repoRoot,
       env: {
         DENO_DEPLOY_TOKEN: token,
       },
-      description: `bootstrap production deploy for Deno app '${appSlug}'`,
+      description: `deploy Deno app '${appSlug}'`,
     });
   } finally {
     try {
-      await Deno.remove(bootstrapConfigPath);
+      await Deno.remove(deployConfigPath);
     } catch (caughtError) {
       if (!(caughtError instanceof Deno.errors.NotFound)) {
         throw caughtError;
@@ -335,7 +347,7 @@ async function bootstrapProductionDeployment({
   }
 }
 
-async function inferDenoSettingsUrl({ repoRoot, token, appSlug }) {
+async function inferDenoAppSettings({ repoRoot, token, appSlug }) {
   await runCommand({
     command: "deno",
     args: ["deploy", "switch", "--app", appSlug],
@@ -356,8 +368,10 @@ async function inferDenoSettingsUrl({ repoRoot, token, appSlug }) {
     throw new Error(`Unable to resolve 'deploy.org' from '${configPath}'.`);
   }
 
-  const targetApp = typeof inferredApp === "string" && inferredApp ? inferredApp : appSlug;
-  return `https://console.deno.com/${organization}/${targetApp}/settings`;
+  return {
+    organization,
+    appSlug: typeof inferredApp === "string" && inferredApp ? inferredApp : appSlug,
+  };
 }
 
 async function inferOrganizationFromToken({ repoRoot, token, deno }) {
@@ -442,6 +456,18 @@ async function publishManifestArtifact({
   };
 }
 
+async function writeWorkspaceManifestHomepage(repoRoot, homepageUrl) {
+  const manifestContent = await readWorkspaceManifest(repoRoot);
+  if (!manifestContent) {
+    throw new Error("manifest.json was not found in the workspace after deploy.");
+  }
+
+  await Deno.writeTextFile(
+    join(repoRoot, "manifest.json"),
+    updateManifestHomepage(manifestContent, homepageUrl),
+  );
+}
+
 function redactEnvVars(envVars) {
   return envVars.map((envVar) => ({
     ...envVar,
@@ -452,18 +478,17 @@ function redactEnvVars(envVars) {
 function summarizeDryRun({
   appSlug,
   organization,
-  contextName,
   runtimeEnvVars,
   buildEnvVars,
   patchPayload,
 }) {
   info(`Dry run for app '${appSlug}'${organization ? ` in organization '${organization}'` : ""}`);
-  info(`Runtime environment context: ${contextName}`);
+  info("Runtime environment context: production");
   info(`Runtime environment variable count: ${runtimeEnvVars.length}`);
   info(`Build environment variable count: ${buildEnvVars.length}`);
   if (organization) {
     info(`Create flow: deno deploy create --source local ... --org ${organization} --app ${appSlug}`);
-    info(`First-create bootstrap deploy: deno deploy . --config .deno-bootstrap.jsonc --prod`);
+    info(`Deploy flow for existing apps: deno deploy . --config .deno-branch-app.jsonc --prod`);
   } else {
     info("Create flow: organization was not provided, so provision will try to infer it from the token using an accessible Deno app.");
   }
@@ -477,24 +502,19 @@ async function appendProvisionSummary({
   createdApp,
   artifactBranch,
   hasHomepageUrl,
-  settingsUrl,
 }) {
   const lines = [];
 
   if (createdApp) {
     lines.push(
-      "Bootstrapped a new Deno app with local source. This first provision run does not create a routed branch URL.",
+      "Scaffolded a new branch Deno app with local source. This first provision run does not run a deploy.",
     );
   }
 
   if (artifactBranch && !hasHomepageUrl) {
     lines.push(
-      `Published baseline manifest to \`${artifactBranch}\` without \`homepage_url\`. This is expected until the app is linked to GitHub in Deno and a later routed build triggers \`publish-manifest\` on the repo default branch.`,
+      `Published baseline manifest to \`${artifactBranch}\` without \`homepage_url\`. It will be populated after the next successful deploy for this branch app.`,
     );
-  }
-
-  if (settingsUrl) {
-    lines.push(`Link this Deno app to GitHub to enable automated builds: ${settingsUrl}`);
   }
 
   if (lines.length === 0) {
@@ -525,13 +545,9 @@ async function main() {
   const githubApiBaseUrl = getStringOption(args, "github-api-base-url", "GITHUB_API_URL", "https://api.github.com");
   const envFilePath = getStringOption(args, "env-file", "ENV_FILE");
   const manifestToolPath = getStringOption(args, "manifest-tool-path", "PLUGIN_MANIFEST_TOOL_PATH");
-  const contextName = refName === defaultBranch ? "production" : "preview";
+  const contextName = "production";
   const artifactBranch = `dist/${refName}`;
   const repository = `${githubOwner}/${githubRepo}`;
-
-  if (contextName === "preview") {
-    notice("Non-default branches share the Deno Deploy Preview context. Later runs on other branches can replace preview-scoped values.");
-  }
 
   const environmentSource = await loadEnvironmentSource(envFilePath);
   const runtimeEnvVars = syncEnv ? collectRuntimeEnvironmentVariables(contextName, environmentSource) : [];
@@ -547,7 +563,6 @@ async function main() {
     summarizeDryRun({
       appSlug,
       organization,
-      contextName,
       runtimeEnvVars,
       buildEnvVars,
       patchPayload,
@@ -577,6 +592,7 @@ async function main() {
   const existingApp = await deno.getApp(appSlug);
   let createdApp = false;
   let effectiveOrganization = organization;
+  let homepageUrl = null;
   if (!existingApp) {
     if (!effectiveOrganization) {
       effectiveOrganization = await inferOrganizationFromToken({
@@ -596,25 +612,36 @@ async function main() {
     });
     createdApp = true;
     notice(
-      "First-time bootstrap completed. homepage_url will remain empty until the app is linked to GitHub in Deno and a later routed build updates the dist manifest.",
+      `Scaffolded Deno app '${appSlug}' without deploying it. homepage_url will remain empty until the next successful deploy for this branch app.`,
     );
   } else {
     notice(`Updating Deno app '${appSlug}'.`);
+    if (!effectiveOrganization) {
+      const inferredSettings = await inferDenoAppSettings({
+        repoRoot,
+        token,
+        appSlug,
+      });
+      effectiveOrganization = inferredSettings.organization;
+    }
   }
 
   await deno.patchApp(appSlug, patchPayload);
   await setOutput("app_slug", appSlug);
 
-  if (createdApp) {
-    notice(`Running an explicit production bootstrap deploy for '${appSlug}'.`);
-    await bootstrapProductionDeployment({
+  if (!createdApp) {
+    notice(`Deploying existing Deno branch app '${appSlug}'.`);
+    await deployBranchApp({
       repoRoot,
       token,
       organization: effectiveOrganization,
       appSlug,
       entrypoint,
     });
-    notice(`Completed the explicit production bootstrap deploy for '${appSlug}'.`);
+    homepageUrl = `https://${appSlug}.${effectiveOrganization}.deno.net`;
+    await writeWorkspaceManifestHomepage(repoRoot, homepageUrl);
+    await setOutput("homepage_url", homepageUrl);
+    notice(`Deployed '${appSlug}' and updated workspace manifest homepage_url to '${homepageUrl}'.`);
   }
 
   const manifestPublishResult = await publishManifestArtifact({
@@ -627,26 +654,14 @@ async function main() {
 
   if (manifestPublishResult?.artifactBranch && !manifestPublishResult.hasHomepageUrl) {
     notice(
-      `The published manifest on '${manifestPublishResult.artifactBranch}' does not include homepage_url yet. publish-manifest will add the stable branch URL after Deno emits deno_deploy.build.routed.`,
+      `The published manifest on '${manifestPublishResult.artifactBranch}' does not include homepage_url yet. It will be populated after the next successful deploy for this branch app.`,
     );
-  }
-
-  let settingsUrl = null;
-  try {
-    settingsUrl = await inferDenoSettingsUrl({
-      repoRoot,
-      token,
-      appSlug,
-    });
-  } catch (summaryError) {
-    warning(`Unable to append the Deno settings summary link: ${summaryError.message}`);
   }
 
   await appendProvisionSummary({
     createdApp,
     artifactBranch: manifestPublishResult?.artifactBranch || null,
     hasHomepageUrl: Boolean(manifestPublishResult?.hasHomepageUrl),
-    settingsUrl,
   });
 }
 

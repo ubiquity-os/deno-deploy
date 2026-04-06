@@ -4,34 +4,34 @@ Provisions Deno Deploy apps, syncs Deno environment variables, and maintains `di
 
 ## Behavior
 
-- One Deno Deploy app is managed per repository.
-- `provision` creates a missing Deno app with a one-time local-source bootstrap, patches dashboard build/runtime config, syncs runtime and build env vars, runs one explicit production bootstrap deploy from the current workspace, generates `manifest.json` in GitHub Actions, and publishes it to `dist/<branch>`.
-- `publish-manifest` handles `repository_dispatch` `deno_deploy.build.routed` events and only updates `homepage_url` in the already-published `dist/<branch>/manifest.json`.
-- `delete` only removes the paired `dist/<branch>` branch. It never deletes the Deno app.
-- Successful `provision` runs append a Deno settings link to the GitHub Actions job summary so the app can be linked to GitHub for automated Deno builds.
-- The first bootstrap run for a newly created app now attempts one explicit production deploy, but `homepage_url` in `dist/*` can still remain empty until the app is linked to GitHub in Deno and a later routed build completes.
+- One local-source Deno Deploy app is managed per Git branch.
+- `main` uses the unsuffixed base app slug. Every other branch uses `<base-app>-<branch-suffix>`.
+- `provision` creates a missing branch app when needed, patches dashboard build/runtime config, syncs runtime and build env vars to Deno `production`, deploys existing branch apps from the current workspace, generates `manifest.json` in GitHub Actions, and publishes it to `dist/<branch>`.
+- After a successful deploy, `provision` updates `dist/<branch>/manifest.json` inline with the stable branch app URL `https://<app-slug>.<org-slug>.deno.net`.
+- `delete` removes both the paired Deno branch app and the paired `dist/<branch>` branch.
+- The first scaffold run for a missing branch app does not run a deploy, so `homepage_url` in `dist/*` can legitimately remain empty until the next successful deploy for that branch app.
 
 ## Inputs
 
-- `action`: `provision`, `publish-manifest`, or `delete`.
-- `token`: Deno Deploy token used for app management, env sync, timeline lookups, and `deno deploy switch`.
+- `action`: `provision` or `delete`.
+- `token`: Deno Deploy token used for app management, env sync, deploys, and deletion.
 - `organization`: Optional Deno Deploy organization slug. When omitted, `provision` first tries to infer it from the token by switching to an accessible Deno app.
-- `app`: Optional Deno Deploy app slug override. Defaults to the sanitized repository name.
+- `app`: Optional base Deno Deploy app slug override. Defaults to the sanitized repository name. `main` uses this value directly; all other branches append a truncated branch suffix.
 - `entrypoint`: App runtime entrypoint. Defaults to `src/deno.ts`.
 - `syncEnv`: Whether to sync workflow runtime env vars during `provision`. Defaults to `true`.
 
 ## Outputs
 
 - `app_slug`: Resolved Deno app slug.
-- `revision_id`: Routed Deno revision id when `publish-manifest` runs.
-- `homepage_url`: Published routed URL written into `dist/*/manifest.json` when available.
+- `homepage_url`: Published stable branch app URL written into `dist/*/manifest.json` when available.
 
 ## Environment Sync
 
-- Runtime env vars go to:
-  - `production` on the repository default branch
-  - `preview` on all other branches
-- Build-only env vars are always synced so Deno-owned builds can regenerate manifests:
+- Runtime env vars always go to Deno `production` in this branch-per-app model.
+- GitHub environment selection still happens in the consumer workflow:
+  - `main` and `demo` should use the GitHub `main` environment
+  - all other branches should use the GitHub `development` environment
+- Build-only env vars are always synced:
   - `PLUGIN_MANIFEST_REPOSITORY`
   - `PLUGIN_MANIFEST_PRODUCTION_BRANCH=main`
 - `syncEnv: false` disables workflow runtime env upload only. The internal build metadata vars above are still managed.
@@ -45,7 +45,7 @@ The action treats the Deno dashboard config as the source of truth. It applies:
 - `build`: `deno x -y @ubiquity-os/plugin-manifest-tool@latest --repository <owner>/<repo> --production-branch main`
 - `predeploy`: `deno install`
 
-Repository identity for Deno-owned builds comes from the persisted Build-context variable `PLUGIN_MANIFEST_REPOSITORY`. Branch-specific live manifest behavior comes from Deno runtime handling in `plugin-sdk`, not from build-time git discovery.
+Repository identity for Deno builds comes from the persisted Build-context variable `PLUGIN_MANIFEST_REPOSITORY`.
 
 Do not commit a `deploy` block in tracked `deno.json` or `deno.jsonc`. `provision` will fail fast if it finds one, because source config would override the action-managed dashboard config.
 
@@ -54,20 +54,19 @@ Do not commit a `deploy` block in tracked `deno.json` or `deno.jsonc`. `provisio
 During `provision`, the action runs:
 
 - `deno deploy create --source local ...` when the app does not exist yet
-- `deno deploy . --config .deno-bootstrap.jsonc --prod` once after creating a missing app
+- `deno deploy . --config .deno-branch-app.jsonc --prod` for existing branch apps
 - `deno install`
 - `deno x -y @ubiquity-os/plugin-manifest-tool@latest`
-- `deno deploy switch --app <slug>` with `DENO_DEPLOY_TOKEN` in the child environment
+- `deno deploy switch --app <slug>` with `DENO_DEPLOY_TOKEN` in the child environment when it needs to infer the organization for an existing app
 
-This can create or update `manifest.json`, `deno.jsonc`, `.deno-bootstrap.jsonc`, `node_modules`, and related install artifacts in the checked-out workspace. Before the one-time bootstrap deploy, the action removes `node_modules` so Deno uploads only the workspace source, then deletes `.deno-bootstrap.jsonc` after the deploy attempt.
+This can create or update `manifest.json`, `deno.jsonc`, `.deno-branch-app.jsonc`, `node_modules`, and related install artifacts in the checked-out workspace. Before each direct deploy, the action removes `node_modules` so Deno uploads only the workspace source, then deletes `.deno-branch-app.jsonc` after the deploy attempt.
 
 ## Requirements
 
 - Run `actions/checkout@v4` before `provision`.
 - Grant `contents: write` so the action can create/update `dist/*` branches.
 - Use a Deno Deploy token with access to the target organization.
-- Link the created app to GitHub in the Deno UI before expecting automated Deno branch builds and routed `publish-manifest` events.
-- Keep the `repository_dispatch` / `publish-manifest` workflow on the consumer repo's default branch. GitHub only runs repository dispatch workflows from the default branch.
+- Configure consumer workflows so `main` and `demo` use the GitHub `main` environment, while all other branches use the GitHub `development` environment.
 
 ## Example Workflow
 
@@ -78,9 +77,6 @@ on:
   push:
     branches-ignore:
       - dist/**
-  repository_dispatch:
-    types:
-      - deno_deploy.build.routed
   delete:
 
 jobs:
@@ -89,6 +85,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    environment: ${{ (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/demo') && 'main' || 'development' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -101,30 +98,20 @@ jobs:
           app: ${{ vars.DENO_PROJECT_NAME }}
           entrypoint: src/worker.ts
 
-  publish-manifest:
-    if: github.event_name == 'repository_dispatch'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: ubiquity-os/deno-deploy@main
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          action: publish-manifest
-          token: ${{ secrets.DENO_2_DEPLOY_TOKEN }}
-
-  delete-dist-branch:
+  delete-branch-app:
     if: github.event_name == 'delete'
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    environment: ${{ (github.event.ref == 'main' || github.event.ref == 'demo') && 'main' || 'development' }}
     steps:
       - uses: ubiquity-os/deno-deploy@main
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           action: delete
+          token: ${{ secrets.DENO_2_DEPLOY_TOKEN }}
+          app: ${{ vars.DENO_PROJECT_NAME }}
 ```
 
 ## Local Debugging
@@ -142,8 +129,9 @@ deno run \
   --organization ubiquity-os \
   --github-owner ubiquity-os-marketplace \
   --github-repo command-start-stop \
-  --ref-name test-branch \
+  --ref-name demo \
   --default-branch development \
+  --app command-start-stop-demo \
   --entrypoint src/worker.ts \
   --env-file ./local.env \
   --dry-run

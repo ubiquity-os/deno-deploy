@@ -2,17 +2,17 @@ name: "Deploy to Deno"
 description: "Provisions Deno Deploy apps, syncs environment variables, and maintains dist/* manifest artifacts."
 inputs:
   action:
-    description: "Action to perform: 'provision', 'publish-manifest', or 'delete'."
+    description: "Action to perform: 'provision' or 'delete'."
     required: true
     default: "provision"
   token:
-    description: "Deno Deploy token used for app management, env sync, timeline lookups, and deno deploy switch."
+    description: "Deno Deploy token used for app management, env sync, deploys, deletion, and deno deploy switch."
     required: false
   organization:
     description: "Optional Deno Deploy organization slug. When omitted, provision tries to infer it from the token using an accessible Deno app."
     required: false
   app:
-    description: "Optional Deno Deploy app slug override. Defaults to the sanitized repository name."
+    description: "Optional base Deno Deploy app slug override. Defaults to the sanitized repository name."
     required: false
   entrypoint:
     description: "Entrypoint used for the app runtime configuration."
@@ -25,13 +25,10 @@ inputs:
 outputs:
   app_slug:
     description: "Resolved Deno Deploy app slug."
-    value: ${{ steps.provision.outputs.app_slug || steps.publish_manifest.outputs.app_slug }}
-  revision_id:
-    description: "Routed Deno Deploy revision id when publish-manifest runs."
-    value: ${{ steps.publish_manifest.outputs.revision_id }}
+    value: ${{ steps.provision.outputs.app_slug }}
   homepage_url:
     description: "Published homepage_url written to dist/* manifest.json when available."
-    value: ${{ steps.publish_manifest.outputs.homepage_url }}
+    value: ${{ steps.provision.outputs.homepage_url }}
 runs:
   using: "composite"
   steps:
@@ -48,7 +45,6 @@ runs:
         APP_INPUT: ${{ inputs.app }}
         DEFAULT_BRANCH_INPUT: ${{ github.event.repository.default_branch }}
         DELETE_REF_INPUT: ${{ github.event.ref || '' }}
-        DISPATCH_REVISION_ID_INPUT: ${{ github.event.client_payload.revision.id || '' }}
         EVENT_NAME_INPUT: ${{ github.event_name }}
         EVENT_REF_TYPE_INPUT: ${{ github.event.ref_type || '' }}
         REPO_NAME_INPUT: ${{ github.event.repository.name }}
@@ -58,25 +54,33 @@ runs:
 
         action="$ACTION_INPUT"
         case "$action" in
-          provision|publish-manifest|delete) ;;
+          provision|delete) ;;
           *)
-            echo "::error::Unsupported action '$action'. Expected 'provision', 'publish-manifest', or 'delete'."
+            echo "::error::Unsupported action '$action'. Expected 'provision' or 'delete'."
             exit 1
             ;;
         esac
+
+        slugify() {
+          local value="$1"
+          value="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//; s/-{2,}/-/g')"
+          printf '%s' "$value"
+        }
+
+        trim_slug() {
+          local value="$1"
+          local limit="$2"
+          if [ "${#value}" -gt "$limit" ]; then
+            value="${value:0:$limit}"
+          fi
+          value="$(printf '%s' "$value" | sed -E 's/-+$//')"
+          printf '%s' "$value"
+        }
 
         raw_app="$APP_INPUT"
         if [ -z "$raw_app" ]; then
           raw_app="$REPO_NAME_INPUT"
         fi
-
-        app_slug="$(printf '%s' "$raw_app" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//; s/-{2,}/-/g')"
-        if [ -z "$app_slug" ]; then
-          app_slug="app"
-        fi
-        while [ "${#app_slug}" -lt 3 ]; do
-          app_slug="${app_slug}app"
-        done
 
         ref_name="$REF_NAME_INPUT"
         if [ "$EVENT_NAME_INPUT" = "delete" ] && [ -n "$DELETE_REF_INPUT" ]; then
@@ -84,6 +88,46 @@ runs:
         fi
         ref_name="${ref_name#refs/heads/}"
         ref_name="${ref_name#refs/tags/}"
+
+        base_app_slug="$(slugify "$raw_app")"
+        if [ -z "$base_app_slug" ]; then
+          base_app_slug="app"
+        fi
+        while [ "${#base_app_slug}" -lt 3 ]; do
+          base_app_slug="${base_app_slug}app"
+        done
+        base_app_slug="$(trim_slug "$base_app_slug" 63)"
+
+        app_slug="$base_app_slug"
+        if [ "$ref_name" != "main" ] && [ -n "$ref_name" ]; then
+          branch_suffix="$(slugify "$ref_name")"
+          if [ -z "$branch_suffix" ]; then
+            branch_suffix="branch"
+          fi
+
+          max_total_length=63
+          max_branch_suffix_length=25
+          available_suffix_budget=$((max_total_length - ${#base_app_slug} - 1))
+          if [ "$available_suffix_budget" -lt 1 ]; then
+            base_app_slug="$(trim_slug "$base_app_slug" $((max_total_length - 2)))"
+            available_suffix_budget=$((max_total_length - ${#base_app_slug} - 1))
+          fi
+
+          suffix_budget="$max_branch_suffix_length"
+          if [ "$available_suffix_budget" -lt "$suffix_budget" ]; then
+            suffix_budget="$available_suffix_budget"
+          fi
+          if [ "$suffix_budget" -lt 1 ]; then
+            suffix_budget=1
+          fi
+
+          branch_suffix="$(trim_slug "$branch_suffix" "$suffix_budget")"
+          if [ -z "$branch_suffix" ]; then
+            branch_suffix="b"
+          fi
+
+          app_slug="${base_app_slug}-${branch_suffix}"
+        fi
 
         is_tag_ref="false"
         if [ "$EVENT_REF_TYPE_INPUT" = "tag" ] || [[ "${GITHUB_REF:-}" == refs/tags/* ]]; then
@@ -93,11 +137,6 @@ runs:
         is_dist_ref="false"
         if [[ "$ref_name" == dist/* ]]; then
           is_dist_ref="true"
-        fi
-
-        env_context="preview"
-        if [ -n "$DEFAULT_BRANCH_INPUT" ] && [ "$ref_name" = "$DEFAULT_BRANCH_INPUT" ]; then
-          env_context="production"
         fi
 
         should_skip="false"
@@ -111,15 +150,6 @@ runs:
             elif [ "$is_dist_ref" = "true" ]; then
               should_skip="true"
               skip_reason="dist branches are ignored"
-            fi
-            ;;
-          publish-manifest)
-            if [ "$EVENT_NAME_INPUT" != "repository_dispatch" ]; then
-              should_skip="true"
-              skip_reason="publish-manifest only handles repository_dispatch events"
-            elif [ -z "$DISPATCH_REVISION_ID_INPUT" ]; then
-              should_skip="true"
-              skip_reason="revision id was not present in github.event.client_payload"
             fi
             ;;
           delete)
@@ -149,8 +179,6 @@ runs:
         echo "ref_name=$ref_name" >> "$GITHUB_OUTPUT"
         echo "artifact_ref=$artifact_ref" >> "$GITHUB_OUTPUT"
         echo "default_branch=$DEFAULT_BRANCH_INPUT" >> "$GITHUB_OUTPUT"
-        echo "environment_context=$env_context" >> "$GITHUB_OUTPUT"
-        echo "dispatch_revision_id=$DISPATCH_REVISION_ID_INPUT" >> "$GITHUB_OUTPUT"
         echo "should_skip=$should_skip" >> "$GITHUB_OUTPUT"
         echo "skip_reason=$skip_reason" >> "$GITHUB_OUTPUT"
 
@@ -180,9 +208,9 @@ runs:
               exit 1
             fi
             ;;
-          publish-manifest)
+          delete)
             if [ -z "$TOKEN_INPUT" ]; then
-              echo "::error::The 'token' input is required for publish-manifest."
+              echo "::error::The 'token' input is required for delete."
               exit 1
             fi
             ;;
@@ -224,35 +252,14 @@ runs:
           --allow-net=api.deno.com,api.github.com \
           "$ACTION_PATH/scripts/provision.js"
 
-    - name: Publish manifest homepage
-      if: ${{ steps.resolve.outputs.action_mode == 'publish-manifest' && steps.resolve.outputs.should_skip != 'true' }}
-      id: publish_manifest
-      shell: bash
-      env:
-        ACTION_PATH: ${{ github.action_path }}
-        APP_SLUG: ${{ github.event.client_payload.app.slug || steps.resolve.outputs.app_slug }}
-        DENO_API_TOKEN: ${{ inputs.token }}
-        GITHUB_OWNER: ${{ github.repository_owner }}
-        GITHUB_REPO: ${{ github.event.repository.name }}
-        GITHUB_TOKEN: ${{ steps.app-token.outputs.token || env.GITHUB_TOKEN || github.token }}
-        PRODUCTION_BRANCH: main
-        REVISION_ID: ${{ steps.resolve.outputs.dispatch_revision_id }}
-      run: |
-        set -euo pipefail
-
-        deno run \
-          --allow-env \
-          --allow-read="$ACTION_PATH" \
-          --allow-write="$GITHUB_OUTPUT" \
-          --allow-net=api.deno.com,api.github.com \
-          "$ACTION_PATH/scripts/publish_manifest.js"
-
-    - name: Delete paired dist branch
+    - name: Delete branch app and paired dist branch
       if: ${{ steps.resolve.outputs.action_mode == 'delete' && steps.resolve.outputs.should_skip != 'true' }}
       shell: bash
       env:
         ACTION_PATH: ${{ github.action_path }}
         ARTIFACT_REF: ${{ steps.resolve.outputs.artifact_ref }}
+        DENO_API_TOKEN: ${{ inputs.token }}
+        DENO_APP_SLUG: ${{ steps.resolve.outputs.app_slug }}
         GITHUB_OWNER: ${{ github.repository_owner }}
         GITHUB_REPO: ${{ github.event.repository.name }}
         GITHUB_TOKEN: ${{ steps.app-token.outputs.token || env.GITHUB_TOKEN || github.token }}
@@ -262,5 +269,5 @@ runs:
         deno run \
           --allow-env \
           --allow-read="$ACTION_PATH" \
-          --allow-net=api.github.com \
+          --allow-net=api.deno.com,api.github.com \
           "$ACTION_PATH/scripts/delete_dist_branch.js"

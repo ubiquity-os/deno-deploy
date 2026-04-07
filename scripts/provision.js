@@ -161,7 +161,7 @@ function mergeUnstableFlags(sourceConfig) {
   return merged;
 }
 
-function buildConfig(entrypoint, repository, sourceConfig = {}) {
+export function buildConfig(entrypoint, repository, sourceConfig = {}) {
   const runtime = isPlainObject(sourceConfig.runtime) ? sourceConfig.runtime : {};
 
   return {
@@ -266,7 +266,7 @@ async function gitFileIsTracked(repoRoot, relativePath) {
   return code === 0;
 }
 
-async function readTrackedSourceConfig(repoRoot) {
+export async function readTrackedSourceConfig(repoRoot) {
   for (const fileName of ["deno.json", "deno.jsonc"]) {
     if (!(await gitFileIsTracked(repoRoot, fileName))) {
       continue;
@@ -283,10 +283,55 @@ async function readTrackedSourceConfig(repoRoot) {
       );
     }
 
-    return parsed;
+    return {
+      fileName,
+      config: parsed,
+    };
   }
 
-  return {};
+  return {
+    fileName: null,
+    config: {},
+  };
+}
+
+export async function stageWorkspaceDeployConfig({
+  repoRoot,
+  fileName,
+  config,
+}) {
+  const targetFileName = fileName || "deno.jsonc";
+  const targetPath = join(repoRoot, targetFileName);
+  let originalContent = null;
+
+  try {
+    originalContent = await Deno.readTextFile(targetPath);
+  } catch (caughtError) {
+    if (!(caughtError instanceof Deno.errors.NotFound)) {
+      throw caughtError;
+    }
+  }
+
+  await Deno.writeTextFile(targetPath, `${JSON.stringify(config, null, 2)}\n`);
+
+  return {
+    fileName: targetFileName,
+    path: targetPath,
+    async restore() {
+      if (originalContent === null) {
+        try {
+          await Deno.remove(targetPath);
+        } catch (caughtError) {
+          if (!(caughtError instanceof Deno.errors.NotFound)) {
+            throw caughtError;
+          }
+        }
+        return;
+      }
+
+      await Deno.writeTextFile(targetPath, originalContent);
+    },
+  };
 }
 
 async function prepareWorkspaceManifest(repoRoot, manifestToolPath) {
@@ -336,9 +381,10 @@ async function deployBranchApp({
   organization,
   appSlug,
   entrypoint,
+  managedConfig,
+  sourceConfigFileName,
 }) {
   const nodeModulesPath = join(repoRoot, "node_modules");
-  const deployConfigPath = join(repoRoot, ".deno-branch-app.jsonc");
   try {
     const nodeModulesInfo = await Deno.stat(nodeModulesPath);
     if (nodeModulesInfo.isDirectory) {
@@ -351,15 +397,21 @@ async function deployBranchApp({
     }
   }
 
-  await Deno.writeTextFile(
-    deployConfigPath,
-    `${JSON.stringify({
+  const stagedConfig = await stageWorkspaceDeployConfig({
+    repoRoot,
+    fileName: sourceConfigFileName,
+    config: {
+      ...managedConfig,
       deploy: {
         org: organization,
         app: appSlug,
         entrypoint,
       },
-    }, null, 2)}\n`,
+    },
+  });
+
+  notice(
+    `Staged temporary ${stagedConfig.fileName} for deploy upload with unstable features: ${JSON.stringify(managedConfig.unstable || [])}.`,
   );
 
   try {
@@ -370,7 +422,7 @@ async function deployBranchApp({
         "deploy",
         ".",
         "--config",
-        deployConfigPath,
+        stagedConfig.path,
         "--prod",
       ],
       cwd: repoRoot,
@@ -380,13 +432,7 @@ async function deployBranchApp({
       description: `deploy Deno app '${appSlug}'`,
     });
   } finally {
-    try {
-      await Deno.remove(deployConfigPath);
-    } catch (caughtError) {
-      if (!(caughtError instanceof Deno.errors.NotFound)) {
-        throw caughtError;
-      }
-    }
+    await stagedConfig.restore();
   }
 }
 
@@ -525,9 +571,9 @@ async function main() {
     repository,
     refName,
   });
-  const sourceConfig = await readTrackedSourceConfig(repoRoot);
+  const sourceConfigState = await readTrackedSourceConfig(repoRoot);
   const patchPayload = {
-    config: buildConfig(entrypoint, repository, sourceConfig),
+    config: buildConfig(entrypoint, repository, sourceConfigState.config),
     env_vars: [...runtimeEnvVars, ...managedRuntimeEnvVars, ...buildEnvVars],
   };
 
@@ -615,6 +661,8 @@ async function main() {
     organization: effectiveOrganization,
     appSlug,
     entrypoint,
+    managedConfig: patchPayload.config,
+    sourceConfigFileName: sourceConfigState.fileName,
   });
   const homepageUrl = `https://${appSlug}.${effectiveOrganization}.deno.net`;
   await writeWorkspaceManifestHomepage(repoRoot, homepageUrl);
@@ -630,9 +678,11 @@ async function main() {
   });
 }
 
-try {
-  await main();
-} catch (caughtError) {
-  error(caughtError.message);
-  throw caughtError;
+if (import.meta.main) {
+  try {
+    await main();
+  } catch (caughtError) {
+    error(caughtError.message);
+    throw caughtError;
+  }
 }

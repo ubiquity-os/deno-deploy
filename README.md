@@ -59,7 +59,7 @@ During `provision`, the action runs:
 - `deno --unstable-kv deploy . --config .deno-branch-app.jsonc --prod` as the single production deployment step for both newly created and existing branch apps
 - `deno install`
 - `deno x -y @ubiquity-os/plugin-manifest-tool@latest`
-This can create or update `manifest.json`, `.deno-branch-app.jsonc`, `node_modules`, and related install artifacts in the checked-out workspace. Before each direct deploy, the action removes `node_modules` so Deno uploads only the workspace source, then deletes `.deno-branch-app.jsonc` after the deploy attempt.
+This can create or update `manifest.json`, `.deno-branch-app.jsonc`, `node_modules`, and related install artifacts in the checked-out workspace. Before each direct deploy, the action removes `node_modules` so Deno uploads only the workspace source, then deletes `.deno-branch-app.jsonc` after the deploy attempt. The generated config preserves the repo's tracked non-`deploy` Deno settings and always includes `unstable: ["kv"]` so `Deno.openKv()` is available during the deploy runtime.
 
 On first provision, this metadata-first create path avoids the extra bootstrap build that `deno deploy create --source local` would otherwise start before the explicit `--prod` deploy. The deploy step always includes `--unstable-kv` so workers that call `Deno.openKv()` can build without extra consumer-side workflow flags.
 

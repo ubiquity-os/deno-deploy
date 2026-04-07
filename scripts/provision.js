@@ -138,10 +138,38 @@ function collectBuildEnvironmentVariables({ repository, refName }) {
   return envVars;
 }
 
-function buildConfig(entrypoint, repository) {
+function isPlainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function mergeUnstableFlags(sourceConfig) {
+  const merged = [];
+  const seen = new Set();
+
+  for (const value of sourceConfig.unstable || []) {
+    if (typeof value !== "string" || seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    merged.push(value);
+  }
+
+  if (!seen.has("kv")) {
+    merged.push("kv");
+  }
+
+  return merged;
+}
+
+function buildConfig(entrypoint, repository, sourceConfig = {}) {
+  const runtime = isPlainObject(sourceConfig.runtime) ? sourceConfig.runtime : {};
+
   return {
+    ...sourceConfig,
     ...buildManagedCommands(repository),
+    unstable: mergeUnstableFlags(sourceConfig),
     runtime: {
+      ...runtime,
       type: "dynamic",
       entrypoint,
     },
@@ -238,7 +266,7 @@ async function gitFileIsTracked(repoRoot, relativePath) {
   return code === 0;
 }
 
-async function assertNoTrackedSourceDeployConfig(repoRoot) {
+async function readTrackedSourceConfig(repoRoot) {
   for (const fileName of ["deno.json", "deno.jsonc"]) {
     if (!(await gitFileIsTracked(repoRoot, fileName))) {
       continue;
@@ -246,12 +274,19 @@ async function assertNoTrackedSourceDeployConfig(repoRoot) {
 
     const filePath = join(repoRoot, fileName);
     const parsed = parseJsonc(await Deno.readTextFile(filePath));
+    if (!isPlainObject(parsed)) {
+      throw new Error(`Tracked source config '${fileName}' must contain a JSON object at the top level.`);
+    }
     if (parsed?.deploy) {
       throw new Error(
         `Tracked source config '${fileName}' contains a 'deploy' block. Remove it so the action-managed Deno dashboard config remains authoritative.`,
       );
     }
+
+    return parsed;
   }
+
+  return {};
 }
 
 async function prepareWorkspaceManifest(repoRoot, manifestToolPath) {
@@ -490,8 +525,9 @@ async function main() {
     repository,
     refName,
   });
+  const sourceConfig = await readTrackedSourceConfig(repoRoot);
   const patchPayload = {
-    config: buildConfig(entrypoint, repository),
+    config: buildConfig(entrypoint, repository, sourceConfig),
     env_vars: [...runtimeEnvVars, ...managedRuntimeEnvVars, ...buildEnvVars],
   };
 
@@ -512,7 +548,6 @@ async function main() {
     throw new Error("github-token is required to publish manifest.json to dist branches.");
   }
 
-  await assertNoTrackedSourceDeployConfig(repoRoot);
   await prepareWorkspaceManifest(repoRoot, manifestToolPath);
 
   const deno = new DenoApiClient({

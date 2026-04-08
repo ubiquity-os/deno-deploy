@@ -640,6 +640,8 @@ async function main() {
       break;
   }
 
+  await setOutput("organization_slug", effectiveOrganization);
+
   if (!existingApp) {
     notice(`Creating Deno app '${appSlug}' via the Deno API before the first production deploy.`);
     await createDenoApp({

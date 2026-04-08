@@ -22,6 +22,9 @@ outputs:
   app_slug:
     description: "Resolved Deno Deploy app slug."
     value: ${{ steps.provision.outputs.app_slug }}
+  organization_slug:
+    description: "Resolved Deno Deploy organization slug."
+    value: ${{ steps.provision.outputs.organization_slug }}
   homepage_url:
     description: "Published homepage_url written to dist/* manifest.json when available."
     value: ${{ steps.provision.outputs.homepage_url }}

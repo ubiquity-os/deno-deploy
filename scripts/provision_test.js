@@ -1,6 +1,10 @@
 import { assertEquals } from "jsr:@std/assert@1.0.13";
 import { join } from "jsr:@std/path@1.1.2";
-import { buildConfig, stageWorkspaceDeployConfig } from "./provision.js";
+import {
+  buildConfig,
+  parseEnvFileContent,
+  stageWorkspaceDeployConfig,
+} from "./provision.js";
 
 Deno.test("buildConfig preserves source config and always enables kv", () => {
   const config = buildConfig("src/worker.ts", "ubiquity-os/example", {
@@ -27,6 +31,18 @@ Deno.test("buildConfig preserves source config and always enables kv", () => {
     custom: "value",
     type: "dynamic",
     entrypoint: "src/worker.ts",
+  });
+});
+
+Deno.test("parseEnvFileContent preserves escaped backslashes before newline decoding", () => {
+  const parsed = parseEnvFileContent(String.raw`ESCAPED=\\n
+NEWLINE=\n
+QUOTED=\"hello\"`);
+
+  assertEquals(parsed, {
+    ESCAPED: String.raw`\n`,
+    NEWLINE: "\n",
+    QUOTED: '"hello"',
   });
 });
 

@@ -1,8 +1,18 @@
 import { isAbsolute, join, relative, resolve } from "jsr:@std/path@1.1.2";
 import { parse as parseJsonc } from "jsr:@std/jsonc";
-import { error, info, notice, setOutput } from "./lib/actions.js";
-import { getBooleanOption, getStringOption, parseArgs, requireString, slugify } from "./lib/cli.js";
-import { inferOrganizationSlugFromAccessibleApps, inferOrganizationSlugFromApp, inferOrganizationSlugFromToken } from "./lib/deno_cli_orgs.js";
+import { error, info, notice, setOutput, warning } from "./lib/actions.js";
+import {
+  getBooleanOption,
+  getStringOption,
+  parseArgs,
+  requireString,
+  slugify,
+} from "./lib/cli.js";
+import {
+  inferOrganizationSlugFromAccessibleApps,
+  inferOrganizationSlugFromApp,
+  inferOrganizationSlugFromToken,
+} from "./lib/deno_cli_orgs.js";
 import { DenoApiClient } from "./lib/deno_api.js";
 import { ensureArtifactBranch, GitHubApiClient } from "./lib/github_api.js";
 import { resolveOrganization } from "./lib/deno_org_resolution.js";
@@ -12,7 +22,8 @@ const PLUGIN_MANIFEST_TOOL_SPEC = "@ubiquity-os/plugin-manifest-tool@latest";
 function buildManagedCommands(repository) {
   return {
     install: "deno install",
-    build: `deno x -y ${PLUGIN_MANIFEST_TOOL_SPEC} --repository ${repository} --production-branch main`,
+    build:
+      `deno x -y ${PLUGIN_MANIFEST_TOOL_SPEC} --repository ${repository} --production-branch main`,
     predeploy: "deno install",
   };
 }
@@ -26,8 +37,9 @@ function isSecretKey(key, hasPublicPrefix) {
   return commonSecretPattern.test(key);
 }
 
-function parseEnvFileContent(content) {
+export function parseEnvFileContent(content) {
   const entries = {};
+  const escapedBackslashPlaceholder = "\u0000";
 
   for (const rawLine of content.split(/\r?\n/)) {
     const line = rawLine.trim();
@@ -54,10 +66,11 @@ function parseEnvFileContent(content) {
     }
 
     entries[key] = value
+      .replace(/\\\\/g, escapedBackslashPlaceholder)
       .replace(/\\n/g, "\n")
       .replace(/\\r/g, "\r")
       .replace(/\\"/g, '"')
-      .replace(/\\\\/g, "\\");
+      .replaceAll(escapedBackslashPlaceholder, "\\");
   }
 
   return entries;
@@ -90,10 +103,14 @@ function collectRuntimeEnvironmentVariables(contextName, environmentSource) {
   const entries = Object.entries(environmentSource)
     .filter(([key]) => !excludedByPattern.test(key))
     .filter(([key]) => !excludedKeys.has(key))
-    .filter(([, value]) => value !== undefined && value !== null && value.trim() !== "")
+    .filter(([, value]) =>
+      value !== undefined && value !== null && value.trim() !== ""
+    )
     .sort(([left], [right]) => left.localeCompare(right));
 
-  const hasPublicPrefix = entries.some(([key]) => /^PUBLIC_|^NEXT_PUBLIC_/.test(key));
+  const hasPublicPrefix = entries.some(([key]) =>
+    /^PUBLIC_|^NEXT_PUBLIC_/.test(key)
+  );
 
   return entries.map(([key, value]) => ({
     key,
@@ -162,7 +179,9 @@ function mergeUnstableFlags(sourceConfig) {
 }
 
 export function buildConfig(entrypoint, repository, sourceConfig = {}) {
-  const runtime = isPlainObject(sourceConfig.runtime) ? sourceConfig.runtime : {};
+  const runtime = isPlainObject(sourceConfig.runtime)
+    ? sourceConfig.runtime
+    : {};
 
   return {
     ...sourceConfig,
@@ -181,7 +200,10 @@ function normalizeEntrypoint(repoRoot, entrypoint) {
     return entrypoint.replaceAll("\\", "/");
   }
 
-  const relativeEntrypoint = relative(repoRoot, entrypoint).replaceAll("\\", "/");
+  const relativeEntrypoint = relative(repoRoot, entrypoint).replaceAll(
+    "\\",
+    "/",
+  );
   if (
     !relativeEntrypoint ||
     relativeEntrypoint === "." ||
@@ -215,7 +237,8 @@ function manifestHasHomepageUrl(content) {
 
   try {
     const manifest = JSON.parse(content);
-    return typeof manifest?.homepage_url === "string" && manifest.homepage_url.trim() !== "";
+    return typeof manifest?.homepage_url === "string" &&
+      manifest.homepage_url.trim() !== "";
   } catch {
     return false;
   }
@@ -246,7 +269,8 @@ async function runCommand({ command, args, cwd, env = {}, description }) {
   const stderrText = new TextDecoder().decode(stderr).trim();
 
   if (code !== 0) {
-    const details = stderrText || stdoutText || `${description} exited with code ${code}.`;
+    const details = stderrText || stdoutText ||
+      `${description} exited with code ${code}.`;
     throw new Error(`${description} failed: ${details}`);
   }
 
@@ -275,7 +299,9 @@ export async function readTrackedSourceConfig(repoRoot) {
     const filePath = join(repoRoot, fileName);
     const parsed = parseJsonc(await Deno.readTextFile(filePath));
     if (!isPlainObject(parsed)) {
-      throw new Error(`Tracked source config '${fileName}' must contain a JSON object at the top level.`);
+      throw new Error(
+        `Tracked source config '${fileName}' must contain a JSON object at the top level.`,
+      );
     }
     if (parsed?.deploy) {
       throw new Error(
@@ -335,7 +361,9 @@ export async function stageWorkspaceDeployConfig({
 }
 
 async function prepareWorkspaceManifest(repoRoot, manifestToolPath) {
-  notice("Preparing manifest.json in the workspace before publishing dist artifacts.");
+  notice(
+    "Preparing manifest.json in the workspace before publishing dist artifacts.",
+  );
   await runCommand({
     command: "deno",
     args: ["install"],
@@ -360,7 +388,9 @@ async function prepareWorkspaceManifest(repoRoot, manifestToolPath) {
 
   const manifestContent = await readWorkspaceManifest(repoRoot);
   if (!manifestContent) {
-    throw new Error("plugin manifest generation completed but manifest.json was not written.");
+    throw new Error(
+      "plugin manifest generation completed but manifest.json was not written.",
+    );
   }
 }
 
@@ -388,7 +418,9 @@ async function deployBranchApp({
   try {
     const nodeModulesInfo = await Deno.stat(nodeModulesPath);
     if (nodeModulesInfo.isDirectory) {
-      notice("Removing node_modules before deploy so Deno uploads only the workspace source.");
+      notice(
+        "Removing node_modules before deploy so Deno uploads only the workspace source.",
+      );
       await Deno.remove(nodeModulesPath, { recursive: true });
     }
   } catch (caughtError) {
@@ -411,8 +443,12 @@ async function deployBranchApp({
   });
 
   notice(
-    `Staged temporary ${stagedConfig.fileName} for deploy upload with unstable features: ${JSON.stringify(managedConfig.unstable || [])}.`,
+    `Staged temporary ${stagedConfig.fileName} for deploy upload with unstable features: ${
+      JSON.stringify(managedConfig.unstable || [])
+    }.`,
   );
+
+  let deployError = null;
 
   try {
     await runCommand({
@@ -431,8 +467,24 @@ async function deployBranchApp({
       },
       description: `deploy Deno app '${appSlug}'`,
     });
-  } finally {
+  } catch (caughtError) {
+    deployError = caughtError;
+  }
+
+  try {
     await stagedConfig.restore();
+  } catch (caughtError) {
+    if (deployError) {
+      warning(
+        `Failed to restore ${stagedConfig.fileName} after deploy error: ${caughtError.message}`,
+      );
+    } else {
+      throw caughtError;
+    }
+  }
+
+  if (deployError) {
+    throw deployError;
   }
 }
 
@@ -445,7 +497,9 @@ async function publishManifestArtifact({
 }) {
   const manifestContent = await readWorkspaceManifest(repoRoot);
   if (!manifestContent) {
-    notice("manifest.json was not found in the workspace. Skipping dist branch publication.");
+    notice(
+      "manifest.json was not found in the workspace. Skipping dist branch publication.",
+    );
     return {
       artifactBranch: null,
       hasHomepageUrl: false,
@@ -486,7 +540,9 @@ async function publishManifestArtifact({
 async function writeWorkspaceManifestHomepage(repoRoot, homepageUrl) {
   const manifestContent = await readWorkspaceManifest(repoRoot);
   if (!manifestContent) {
-    throw new Error("manifest.json was not found in the workspace after deploy.");
+    throw new Error(
+      "manifest.json was not found in the workspace after deploy.",
+    );
   }
 
   await Deno.writeTextFile(
@@ -510,59 +566,118 @@ function summarizeDryRun({
   buildEnvVars,
   patchPayload,
 }) {
-  info(`Dry run for app '${appSlug}'${organization ? ` in organization '${organization}'` : ""}`);
+  info(
+    `Dry run for app '${appSlug}'${
+      organization ? ` in organization '${organization}'` : ""
+    }`,
+  );
   info("Runtime environment context: production");
   info(`Runtime environment variable count: ${runtimeEnvVars.length}`);
   info(`Build environment variable count: ${buildEnvVars.length}`);
   if (organization) {
-    info(`Missing-app flow: create app metadata via POST /v2/apps for '${appSlug}', then deno --unstable-kv deploy . --config .deno-branch-app.jsonc --prod`);
-    info("Existing-app flow: deno --unstable-kv deploy . --config .deno-branch-app.jsonc --prod");
+    info(
+      `Missing-app flow: create app metadata via POST /v2/apps for '${appSlug}', then deno --unstable-kv deploy . --config .deno-branch-app.jsonc --prod`,
+    );
+    info(
+      "Existing-app flow: deno --unstable-kv deploy . --config .deno-branch-app.jsonc --prod",
+    );
   } else if (fallbackOrganization) {
     info(
       `Missing-app flow: organization was not provided, so provision will first infer it from the token and then fall back to DENO_ORG_NAME='${fallbackOrganization}' if inference is unavailable.`,
     );
-    info("Existing-app flow: deno --unstable-kv deploy . --config .deno-branch-app.jsonc --prod");
+    info(
+      "Existing-app flow: deno --unstable-kv deploy . --config .deno-branch-app.jsonc --prod",
+    );
   } else {
-    info("Missing-app flow: organization was not provided, so provision will infer it from the token using the working direct and app-based paths before failing.");
-    info("Existing-app flow: deno --unstable-kv deploy . --config .deno-branch-app.jsonc --prod");
+    info(
+      "Missing-app flow: organization was not provided, so provision will infer it from the token using the working direct and app-based paths before failing.",
+    );
+    info(
+      "Existing-app flow: deno --unstable-kv deploy . --config .deno-branch-app.jsonc --prod",
+    );
   }
-  info(`Patch payload: ${JSON.stringify({
-    ...patchPayload,
-    env_vars: redactEnvVars(patchPayload.env_vars || []),
-  }, null, 2)}`);
+  info(`Patch payload: ${
+    JSON.stringify(
+      {
+        ...patchPayload,
+        env_vars: redactEnvVars(patchPayload.env_vars || []),
+      },
+      null,
+      2,
+    )
+  }`);
 }
 
 async function main() {
   const args = parseArgs(Deno.args);
-  const repoRoot = resolve(getStringOption(args, "repo-root", "REPO_ROOT", Deno.cwd()));
+  const repoRoot = resolve(
+    getStringOption(args, "repo-root", "REPO_ROOT", Deno.cwd()),
+  );
   const token = requireString(
     "token",
-    getStringOption(args, "token", "", "") || Deno.env.get("DENO_API_TOKEN") || Deno.env.get("DENO_DEPLOY_TOKEN") || "",
+    getStringOption(args, "token", "", "") || Deno.env.get("DENO_API_TOKEN") ||
+      Deno.env.get("DENO_DEPLOY_TOKEN") || "",
   );
   const organization = getStringOption(args, "organization", "ORGANIZATION");
   const fallbackOrganization = (Deno.env.get("DENO_ORG_NAME") || "").trim();
-  const githubOwner = requireString("github-owner", getStringOption(args, "github-owner", "GITHUB_OWNER"));
-  const githubRepo = requireString("github-repo", getStringOption(args, "github-repo", "GITHUB_REPO"));
-  const refName = requireString("ref-name", getStringOption(args, "ref-name", "REF_NAME"));
-  const defaultBranch = requireString("default-branch", getStringOption(args, "default-branch", "DEFAULT_BRANCH"));
+  const githubOwner = requireString(
+    "github-owner",
+    getStringOption(args, "github-owner", "GITHUB_OWNER"),
+  );
+  const githubRepo = requireString(
+    "github-repo",
+    getStringOption(args, "github-repo", "GITHUB_REPO"),
+  );
+  const refName = requireString(
+    "ref-name",
+    getStringOption(args, "ref-name", "REF_NAME"),
+  );
+  const defaultBranch = requireString(
+    "default-branch",
+    getStringOption(args, "default-branch", "DEFAULT_BRANCH"),
+  );
   const entrypoint = normalizeEntrypoint(
     repoRoot,
     getStringOption(args, "entrypoint", "ENTRYPOINT", "src/deno.ts"),
   );
-  const appSlug = slugify(getStringOption(args, "app", "DENO_APP_SLUG", githubRepo));
+  const appSlug = slugify(
+    getStringOption(args, "app", "DENO_APP_SLUG", githubRepo),
+  );
   const githubToken = getStringOption(args, "github-token", "GITHUB_TOKEN");
   const dryRun = getBooleanOption(args, "dry-run", "DRY_RUN", false);
-  const denoApiBaseUrl = getStringOption(args, "deno-api-base-url", "DENO_API_BASE_URL", "https://api.deno.com");
-  const denoConsoleUrl = getStringOption(args, "deno-console-url", "DENO_CONSOLE_URL", "https://console.deno.com");
-  const githubApiBaseUrl = getStringOption(args, "github-api-base-url", "GITHUB_API_URL", "https://api.github.com");
+  const denoApiBaseUrl = getStringOption(
+    args,
+    "deno-api-base-url",
+    "DENO_API_BASE_URL",
+    "https://api.deno.com",
+  );
+  const denoConsoleUrl = getStringOption(
+    args,
+    "deno-console-url",
+    "DENO_CONSOLE_URL",
+    "https://console.deno.com",
+  );
+  const githubApiBaseUrl = getStringOption(
+    args,
+    "github-api-base-url",
+    "GITHUB_API_URL",
+    "https://api.github.com",
+  );
   const envFilePath = getStringOption(args, "env-file", "ENV_FILE");
-  const manifestToolPath = getStringOption(args, "manifest-tool-path", "PLUGIN_MANIFEST_TOOL_PATH");
+  const manifestToolPath = getStringOption(
+    args,
+    "manifest-tool-path",
+    "PLUGIN_MANIFEST_TOOL_PATH",
+  );
   const contextName = "production";
   const artifactBranch = `dist/${refName}`;
   const repository = `${githubOwner}/${githubRepo}`;
 
   const environmentSource = await loadEnvironmentSource(envFilePath);
-  const runtimeEnvVars = collectRuntimeEnvironmentVariables(contextName, environmentSource);
+  const runtimeEnvVars = collectRuntimeEnvironmentVariables(
+    contextName,
+    environmentSource,
+  );
   const managedRuntimeEnvVars = collectManagedRuntimeEnvironmentVariables({
     contextName,
     refName,
@@ -591,7 +706,9 @@ async function main() {
   }
 
   if (!githubToken) {
-    throw new Error("github-token is required to publish manifest.json to dist branches.");
+    throw new Error(
+      "github-token is required to publish manifest.json to dist branches.",
+    );
   }
 
   await prepareWorkspaceManifest(repoRoot, manifestToolPath);
@@ -608,42 +725,53 @@ async function main() {
   });
 
   const existingApp = await deno.getApp(appSlug);
-  const { organization: effectiveOrganization, source: organizationSource } = await resolveOrganization({
-    organization,
-    fallbackOrganization,
-    token,
-    repoRoot,
-    appSlug,
-    hasExistingApp: Boolean(existingApp),
-    deno,
-    consoleUrl: denoConsoleUrl,
-    inferFromToken: inferOrganizationSlugFromToken,
-    inferFromApp: inferOrganizationSlugFromApp,
-    inferFromAccessibleApps: inferOrganizationSlugFromAccessibleApps,
-  });
+  const { organization: effectiveOrganization, source: organizationSource } =
+    await resolveOrganization({
+      organization,
+      fallbackOrganization,
+      token,
+      repoRoot,
+      appSlug,
+      hasExistingApp: Boolean(existingApp),
+      deno,
+      consoleUrl: denoConsoleUrl,
+      inferFromToken: inferOrganizationSlugFromToken,
+      inferFromApp: inferOrganizationSlugFromApp,
+      inferFromAccessibleApps: inferOrganizationSlugFromAccessibleApps,
+    });
 
   switch (organizationSource) {
     case "input":
       notice(`Using explicit Deno organization '${effectiveOrganization}'.`);
       break;
     case "token":
-      notice(`Inferred Deno organization '${effectiveOrganization}' directly from the token.`);
+      notice(
+        `Inferred Deno organization '${effectiveOrganization}' directly from the token.`,
+      );
       break;
     case "existing-app":
-      notice(`Inferred Deno organization '${effectiveOrganization}' from the existing app '${appSlug}'.`);
+      notice(
+        `Inferred Deno organization '${effectiveOrganization}' from the existing app '${appSlug}'.`,
+      );
       break;
     case "accessible-apps":
-      notice(`Inferred Deno organization '${effectiveOrganization}' from accessible Deno apps.`);
+      notice(
+        `Inferred Deno organization '${effectiveOrganization}' from accessible Deno apps.`,
+      );
       break;
     case "env":
-      notice(`Using DENO_ORG_NAME fallback '${effectiveOrganization}' after token inference was unavailable.`);
+      notice(
+        `Using DENO_ORG_NAME fallback '${effectiveOrganization}' after token inference was unavailable.`,
+      );
       break;
   }
 
   await setOutput("organization_slug", effectiveOrganization);
 
   if (!existingApp) {
-    notice(`Creating Deno app '${appSlug}' via the Deno API before the first production deploy.`);
+    notice(
+      `Creating Deno app '${appSlug}' via the Deno API before the first production deploy.`,
+    );
     await createDenoApp({
       deno,
       appSlug,
@@ -669,7 +797,9 @@ async function main() {
   const homepageUrl = `https://${appSlug}.${effectiveOrganization}.deno.net`;
   await writeWorkspaceManifestHomepage(repoRoot, homepageUrl);
   await setOutput("homepage_url", homepageUrl);
-  notice(`Deployed '${appSlug}' and updated workspace manifest homepage_url to '${homepageUrl}'.`);
+  notice(
+    `Deployed '${appSlug}' and updated workspace manifest homepage_url to '${homepageUrl}'.`,
+  );
 
   await publishManifestArtifact({
     github,

@@ -380,7 +380,7 @@ async function prepareWorkspaceManifest(repoRoot, manifestToolPath) {
   } else {
     await runCommand({
       command: "deno",
-      args: ["x", "-y", "@ubiquity-os/plugin-manifest-tool@latest"],
+      args: ["x", "-y", PLUGIN_MANIFEST_TOOL_SPEC],
       cwd: repoRoot,
       description: "plugin manifest generation",
     });

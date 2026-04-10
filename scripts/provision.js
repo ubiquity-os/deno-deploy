@@ -131,27 +131,37 @@ function collectManagedRuntimeEnvironmentVariables({ contextName, refName }) {
   ];
 }
 
-function collectBuildEnvironmentVariables({ repository, refName }) {
-  const envVars = [
-    {
+export function collectBuildEnvironmentVariables({
+  repository,
+  refName,
+  buildManifest = true,
+}) {
+  const envVars = [];
+
+  if (buildManifest) {
+    envVars.push({
       key: "PLUGIN_MANIFEST_PRODUCTION_BRANCH",
       value: "main",
       secret: false,
       contexts: ["build"],
-    },
-    {
+    });
+    envVars.push({
       key: "PLUGIN_MANIFEST_REPOSITORY",
       value: repository,
       secret: false,
       contexts: ["build"],
-    },
+    });
+  }
+
+  envVars.push(
     {
       key: "REF_NAME",
       value: refName,
       secret: false,
       contexts: ["build"],
     },
-  ];
+  );
+
   return envVars;
 }
 
@@ -178,14 +188,19 @@ function mergeUnstableFlags(sourceConfig) {
   return merged;
 }
 
-export function buildConfig(entrypoint, repository, sourceConfig = {}) {
+export function buildConfig(
+  entrypoint,
+  repository,
+  sourceConfig = {},
+  buildManifest = true,
+) {
   const runtime = isPlainObject(sourceConfig.runtime)
     ? sourceConfig.runtime
     : {};
 
   return {
     ...sourceConfig,
-    ...buildManagedCommands(repository),
+    ...(buildManifest ? buildManagedCommands(repository) : {}),
     unstable: mergeUnstableFlags(sourceConfig),
     runtime: {
       ...runtime,
@@ -645,6 +660,12 @@ async function main() {
   );
   const githubToken = getStringOption(args, "github-token", "GITHUB_TOKEN");
   const dryRun = getBooleanOption(args, "dry-run", "DRY_RUN", false);
+  const buildManifest = getBooleanOption(
+    args,
+    "build-manifest",
+    "BUILD_MANIFEST",
+    true,
+  );
   const denoApiBaseUrl = getStringOption(
     args,
     "deno-api-base-url",
@@ -685,10 +706,16 @@ async function main() {
   const buildEnvVars = collectBuildEnvironmentVariables({
     repository,
     refName,
+    buildManifest,
   });
   const sourceConfigState = await readTrackedSourceConfig(repoRoot);
   const patchPayload = {
-    config: buildConfig(entrypoint, repository, sourceConfigState.config),
+    config: buildConfig(
+      entrypoint,
+      repository,
+      sourceConfigState.config,
+      buildManifest,
+    ),
     env_vars: [...runtimeEnvVars, ...managedRuntimeEnvVars, ...buildEnvVars],
   };
 
@@ -705,24 +732,32 @@ async function main() {
     return;
   }
 
-  if (!githubToken) {
+  if (buildManifest && !githubToken) {
     throw new Error(
       "github-token is required to publish manifest.json to dist branches.",
     );
   }
 
-  await prepareWorkspaceManifest(repoRoot, manifestToolPath);
+  if (buildManifest) {
+    await prepareWorkspaceManifest(repoRoot, manifestToolPath);
+  } else {
+    notice(
+      "Manifest lifecycle is disabled for this deploy. Skipping manifest generation, homepage updates, and dist branch publication.",
+    );
+  }
 
   const deno = new DenoApiClient({
     token,
     baseUrl: denoApiBaseUrl,
   });
-  const github = new GitHubApiClient({
-    token: githubToken,
-    owner: githubOwner,
-    repo: githubRepo,
-    baseUrl: githubApiBaseUrl,
-  });
+  const github = buildManifest
+    ? new GitHubApiClient({
+      token: githubToken,
+      owner: githubOwner,
+      repo: githubRepo,
+      baseUrl: githubApiBaseUrl,
+    })
+    : null;
 
   const existingApp = await deno.getApp(appSlug);
   const { organization: effectiveOrganization, source: organizationSource } =
@@ -795,19 +830,23 @@ async function main() {
     sourceConfigFileName: sourceConfigState.fileName,
   });
   const homepageUrl = `https://${appSlug}.${effectiveOrganization}.deno.net`;
-  await writeWorkspaceManifestHomepage(repoRoot, homepageUrl);
   await setOutput("homepage_url", homepageUrl);
-  notice(
-    `Deployed '${appSlug}' and updated workspace manifest homepage_url to '${homepageUrl}'.`,
-  );
+  if (buildManifest) {
+    await writeWorkspaceManifestHomepage(repoRoot, homepageUrl);
+    notice(
+      `Deployed '${appSlug}' and updated workspace manifest homepage_url to '${homepageUrl}'.`,
+    );
 
-  await publishManifestArtifact({
-    github,
-    repoRoot,
-    sourceBranch: refName,
-    defaultBranch,
-    artifactBranch,
-  });
+    await publishManifestArtifact({
+      github,
+      repoRoot,
+      sourceBranch: refName,
+      defaultBranch,
+      artifactBranch,
+    });
+  } else {
+    notice(`Deployed '${appSlug}' at '${homepageUrl}'.`);
+  }
 }
 
 if (import.meta.main) {

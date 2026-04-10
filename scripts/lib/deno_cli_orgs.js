@@ -80,6 +80,7 @@ export async function inferOrganizationSlugFromToken({
       "--quiet",
       "--allow-env=DENO_DEPLOY_TOKEN,DENO_CONSOLE_URL,__IS_WSL_TEST__",
       "--allow-net=api.deno.com,console.deno.com",
+      "--allow-sys=osRelease",
       workerPath.href,
     ],
     env: {

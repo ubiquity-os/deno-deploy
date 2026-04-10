@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.8.0](https://github.com/ubiquity-os/deno-deploy/compare/v1.7.0...v1.8.0) (2026-04-10)
+
+
+### Features
+
+* make manifest lifecycle optional for non-plugin deploys ([0bfa1b1](https://github.com/ubiquity-os/deno-deploy/commit/0bfa1b1682947f87bf1a7255bc66361b82432097))
+* make manifest lifecycle optional for non-plugin deploys ([393199b](https://github.com/ubiquity-os/deno-deploy/commit/393199b6ddf88a79524edb5813e60d1bee5e8a14))
+
+
+### Bug Fixes
+
+* allow org inference worker to read os release ([54000eb](https://github.com/ubiquity-os/deno-deploy/commit/54000eb84aa31e202384d2af95936b67faa53ffe))
+* allow org inference worker WSL probes ([c733344](https://github.com/ubiquity-os/deno-deploy/commit/c7333447ac6e3edcb5e24f6511a8c40bf51c6f02))
+
 ## [1.7.0](https://github.com/ubiquity-os/deno-deploy/compare/v1.6.1...v1.7.0) (2026-04-09)
 
 

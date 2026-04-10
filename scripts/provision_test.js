@@ -2,11 +2,12 @@ import { assertEquals } from "jsr:@std/assert@1.0.13";
 import { join } from "jsr:@std/path@1.1.2";
 import {
   buildConfig,
+  collectBuildEnvironmentVariables,
   parseEnvFileContent,
   stageWorkspaceDeployConfig,
 } from "./provision.js";
 
-Deno.test("buildConfig preserves source config and always enables kv", () => {
+Deno.test("buildConfig preserves source config, injects manifest build commands, and always enables kv by default", () => {
   const config = buildConfig("src/worker.ts", "ubiquity-os/example", {
     imports: {
       "foo/": "./foo/",
@@ -23,6 +24,12 @@ Deno.test("buildConfig preserves source config and always enables kv", () => {
   assertEquals(config.imports, {
     "foo/": "./foo/",
   });
+  assertEquals(config.install, "deno install");
+  assertEquals(
+    config.build,
+    "deno x -y @ubiquity-os/plugin-manifest-tool@latest --repository ubiquity-os/example --production-branch main",
+  );
+  assertEquals(config.predeploy, "deno install");
   assertEquals(config.unstable, ["bare-node-builtins", "kv"]);
   assertEquals(config.compilerOptions, {
     strict: true,
@@ -32,6 +39,56 @@ Deno.test("buildConfig preserves source config and always enables kv", () => {
     type: "dynamic",
     entrypoint: "src/worker.ts",
   });
+});
+
+Deno.test("buildConfig skips manifest build commands when buildManifest is disabled", () => {
+  const config = buildConfig(
+    "src/worker.ts",
+    "ubiquity-os/example",
+    {
+      imports: {
+        "foo/": "./foo/",
+      },
+      unstable: ["bare-node-builtins"],
+      build: "deno task build",
+      predeploy: "deno task predeploy",
+      runtime: {
+        custom: "value",
+      },
+    },
+    false,
+  );
+
+  assertEquals(config.imports, {
+    "foo/": "./foo/",
+  });
+  assertEquals(config.build, "deno task build");
+  assertEquals(config.predeploy, "deno task predeploy");
+  assertEquals(config.install, undefined);
+  assertEquals(config.unstable, ["bare-node-builtins", "kv"]);
+  assertEquals(config.runtime, {
+    custom: "value",
+    type: "dynamic",
+    entrypoint: "src/worker.ts",
+  });
+});
+
+Deno.test("collectBuildEnvironmentVariables omits manifest-specific variables when buildManifest is disabled", () => {
+  assertEquals(
+    collectBuildEnvironmentVariables({
+      repository: "ubiquity-os/example",
+      refName: "feature/test",
+      buildManifest: false,
+    }),
+    [
+      {
+        key: "REF_NAME",
+        value: "feature/test",
+        secret: false,
+        contexts: ["build"],
+      },
+    ],
+  );
 });
 
 Deno.test("parseEnvFileContent preserves escaped backslashes before newline decoding", () => {

@@ -18,6 +18,10 @@ inputs:
     description: "Entrypoint used for the app runtime configuration."
     required: false
     default: "src/deno.ts"
+  buildManifest:
+    description: "Whether plugin manifest generation, homepage updates, and dist/* manifest publication should run."
+    required: false
+    default: "true"
 outputs:
   app_slug:
     description: "Resolved Deno Deploy app slug."
@@ -26,7 +30,7 @@ outputs:
     description: "Resolved Deno Deploy organization slug."
     value: ${{ steps.provision.outputs.organization_slug }}
   homepage_url:
-    description: "Published homepage_url written to dist/* manifest.json when available."
+    description: "Resolved stable Deno app homepage URL. Written to dist/* manifest.json only when buildManifest is enabled."
     value: ${{ steps.provision.outputs.homepage_url }}
 runs:
   using: "composite"
@@ -237,6 +241,7 @@ runs:
         DENO_API_TOKEN: ${{ inputs.token }}
         DENO_APP_SLUG: ${{ steps.resolve.outputs.app_slug }}
         DENO_ORG_NAME: ${{ env.DENO_ORG_NAME }}
+        BUILD_MANIFEST: ${{ inputs.buildManifest }}
         ENTRYPOINT: ${{ inputs.entrypoint }}
         GITHUB_OWNER: ${{ github.repository_owner }}
         GITHUB_REPO: ${{ github.event.repository.name }}

@@ -88,7 +88,6 @@ function collectRuntimeEnvironmentVariables(contextName, environmentSource) {
   const excludedByPattern =
     /^(DENO_|GITHUB_|RUNNER_|CI$|HOME$|PATH$|PWD$|SHELL$|SHLVL$|LANG$|LC_|TZ$|ACTIONS_|INPUT_|STATE_|JAVA_HOME$|POWERSHELL_)/;
   const excludedKeys = new Set([
-    "ACTION_REF",
     "BUILD_ACTION_ENABLED",
     "DENO_API_TOKEN",
     "DENO_DEPLOY_TOKEN",

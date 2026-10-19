@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.8.1](https://github.com/ubiquity-os/deno-deploy/compare/v1.8.0...v1.8.1) (2026-10-19)
+
+
+### Bug Fixes
+
+* integrate Deno deploy argument ordering repair ([e878068](https://github.com/ubiquity-os/deno-deploy/commit/e8780681d9e625b03cf4e4ea2c1d6108801bb331))
+* integrate deploy working-directory correction ([739f50e](https://github.com/ubiquity-os/deno-deploy/commit/739f50efc77005c64464f47306ef12c757743dc8))
+* pass unstable KV flag to deploy subcommand ([ef4b38e](https://github.com/ubiquity-os/deno-deploy/commit/ef4b38e0a455e427697736634c23b23cad7bae96))
+* use deployment working directory without positional argument ([e25f885](https://github.com/ubiquity-os/deno-deploy/commit/e25f8856864bfa7ca66dccdebe0d8beb11ec2a0f))
+
 ## [1.8.0](https://github.com/ubiquity-os/deno-deploy/compare/v1.7.0...v1.8.0) (2026-04-22)
 
 

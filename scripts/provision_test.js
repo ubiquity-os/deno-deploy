@@ -176,7 +176,7 @@ Deno.test("stageWorkspaceDeployConfig removes a generated config file when none 
   }
 });
 
-Deno.test("deployBranchApp places unstable flags after deploy and restores source config", async (t) => {
+Deno.test("deployBranchApp deploys from the configured workspace and restores source config", async (t) => {
   const originalCommand = Deno.Command;
 
   for (const code of [0, 1]) {
@@ -231,7 +231,6 @@ Deno.test("deployBranchApp places unstable flags after deploy and restores sourc
         assertEquals(invocation.command, "deno");
         assertEquals(invocation.args, [
           "deploy",
-          "--unstable-kv",
           "--config",
           configPath,
           "--prod",

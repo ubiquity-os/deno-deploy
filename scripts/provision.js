@@ -469,7 +469,6 @@ export async function deployBranchApp({
       command: "deno",
       args: [
         "deploy",
-        "--unstable-kv",
         "--config",
         stagedConfig.path,
         "--prod",

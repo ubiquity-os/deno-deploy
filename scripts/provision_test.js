@@ -1,8 +1,9 @@
-import { assertEquals } from "jsr:@std/assert@1.0.13";
+import { assertEquals, assertRejects } from "jsr:@std/assert@1.0.13";
 import { join } from "jsr:@std/path@1.1.2";
 import {
   buildConfig,
   collectBuildEnvironmentVariables,
+  deployBranchApp,
   parseEnvFileContent,
   stageWorkspaceDeployConfig,
 } from "./provision.js";
@@ -172,5 +173,77 @@ Deno.test("stageWorkspaceDeployConfig removes a generated config file when none 
     assertEquals(exists, false);
   } finally {
     await Deno.remove(repoRoot, { recursive: true });
+  }
+});
+
+Deno.test("deployBranchApp places unstable flags after deploy and restores source config", async (t) => {
+  const originalCommand = Deno.Command;
+
+  for (const code of [0, 1]) {
+    await t.step(`deploy exit ${code}`, async () => {
+      const repoRoot = await Deno.makeTempDir();
+      const configPath = join(repoRoot, "deno.jsonc");
+      const originalContent = '{ "unstable": ["bare-node-builtins"] }\n';
+      let invocation;
+
+      Deno.Command = class {
+        constructor(command, options) {
+          invocation = { command, ...options };
+        }
+
+        async output() {
+          const staged = JSON.parse(await Deno.readTextFile(configPath));
+          assertEquals(staged.unstable, ["kv"]);
+          assertEquals(staged.deploy, {
+            org: "ubiquity-os",
+            app: "example",
+            entrypoint: "src/worker.ts",
+          });
+          return {
+            code,
+            stdout: new Uint8Array(),
+            stderr: new TextEncoder().encode(
+              code ? "fixture deploy failure" : "",
+            ),
+          };
+        }
+      };
+
+      try {
+        await Deno.writeTextFile(configPath, originalContent);
+        const deploy = () =>
+          deployBranchApp({
+            repoRoot,
+            token: "fixture-token",
+            organization: "ubiquity-os",
+            appSlug: "example",
+            entrypoint: "src/worker.ts",
+            managedConfig: { unstable: ["kv"] },
+            sourceConfigFileName: "deno.jsonc",
+          });
+
+        if (code === 0) {
+          await deploy();
+        } else {
+          await assertRejects(deploy, Error, "fixture deploy failure");
+        }
+
+        assertEquals(invocation.command, "deno");
+        assertEquals(invocation.args, [
+          "deploy",
+          "--unstable-kv",
+          ".",
+          "--config",
+          configPath,
+          "--prod",
+        ]);
+        assertEquals(invocation.cwd, repoRoot);
+        assertEquals(invocation.env, { DENO_DEPLOY_TOKEN: "fixture-token" });
+        assertEquals(await Deno.readTextFile(configPath), originalContent);
+      } finally {
+        Deno.Command = originalCommand;
+        await Deno.remove(repoRoot, { recursive: true });
+      }
+    });
   }
 });

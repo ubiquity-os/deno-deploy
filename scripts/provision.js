@@ -419,7 +419,7 @@ async function createDenoApp({
   });
 }
 
-async function deployBranchApp({
+export async function deployBranchApp({
   repoRoot,
   token,
   organization,
@@ -468,8 +468,8 @@ async function deployBranchApp({
     await runCommand({
       command: "deno",
       args: [
-        "--unstable-kv",
         "deploy",
+        "--unstable-kv",
         ".",
         "--config",
         stagedConfig.path,

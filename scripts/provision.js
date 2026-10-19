@@ -470,7 +470,6 @@ export async function deployBranchApp({
       args: [
         "deploy",
         "--unstable-kv",
-        ".",
         "--config",
         stagedConfig.path,
         "--prod",

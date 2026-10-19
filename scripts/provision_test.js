@@ -232,7 +232,6 @@ Deno.test("deployBranchApp places unstable flags after deploy and restores sourc
         assertEquals(invocation.args, [
           "deploy",
           "--unstable-kv",
-          ".",
           "--config",
           configPath,
           "--prod",
